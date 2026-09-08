@@ -57,6 +57,14 @@ html, body {
   background: var(--panel); border-bottom: 1px solid var(--border);
   padding: 6px 8px; min-height: 40px;
 }
+#view-switcher { display: flex; gap: 2px; margin-right: 4px; flex: none; }
+.view-btn {
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 6px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.view-btn:hover { color: var(--fg); background: var(--bg); }
+.view-btn.active { color: var(--accent); background: var(--bg); }
 #tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; scrollbar-width: thin; }
 .tab {
   display: flex; align-items: center; gap: 6px;
@@ -83,6 +91,25 @@ html, body {
 #terminals { flex: 1; min-height: 0; position: relative; }
 .term-host { position: absolute; inset: 0; padding: 4px; }
 .term-host[hidden] { display: none !important; }
+
+/* ── Files view ────────────────────────────────────────────────────── */
+#files { display: flex; flex: 1; min-height: 0; }
+#file-tree {
+  width: 260px; flex: none;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#editor { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#editor .cm-editor { flex: 1; min-height: 0; }
+#editor .cm-scroller { overflow: auto; }
+@media (max-width: 700px) {
+  #file-tree { width: 200px; }
+}
+
+.file-tree li:hover { background: var(--bg); }
+.file-tree li { color: var(--fg); }
 
 /* ── Mobile keys ───────────────────────────────────────────────────── */
 #mobile-keys {

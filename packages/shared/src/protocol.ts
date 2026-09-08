@@ -48,14 +48,91 @@ export interface AccessKeyRes { type: 'accesskey.res'; id: string; key: string; 
 
 export interface PeerGone { type: 'peer.gone' } // relay→ remaining peer when the other side drops
 
+// ── Files ────────────────────────────────────────────────────────────────
+// All `path` arguments are relative to the agent's configured root; the agent
+// resolves them through the path-traversal guard and rejects escapes.
+// `mtimeMs` is the conflict token: the editor sends back the value it read,
+// and a write whose mtime no longer matches is rejected.
+
+export type EntryKind = 'file' | 'dir' | 'symlink' | 'other';
+
+export interface FsEntry {
+  name: string;
+  kind: EntryKind;
+  size: number;      // 0 for dirs
+  mtimeMs: number;
+}
+
+export interface FsListReq { type: 'fs.list'; id: string; path: string }
+export interface FsListRes { type: 'fs.list.res'; id: string; ok: true; path: string; entries: FsEntry[] }
+export interface FsListErr { type: 'fs.list.res'; id: string; ok: false; error: string }
+
+export interface FsReadReq { type: 'fs.read'; id: string; path: string }
+export interface FsReadRes { type: 'fs.read.res'; id: string; ok: true; path: string; content: string; mtimeMs: number; size: number; truncated: boolean }
+export interface FsReadErr { type: 'fs.read.res'; id: string; ok: false; error: string }
+
+export interface FsWriteReq { type: 'fs.write'; id: string; path: string; content: string; baseMtimeMs?: number }
+export interface FsWriteRes { type: 'fs.write.res'; id: string; ok: true; path: string; mtimeMs: number }
+export interface FsWriteErr { type: 'fs.write.res'; id: string; ok: false; error: string; conflict?: boolean; serverMtimeMs?: number }
+
+export interface FsMkdirReq { type: 'fs.mkdir'; id: string; path: string }
+export interface FsMkdirRes { type: 'fs.mkdir.res'; id: string; ok: boolean; error?: string }
+
+export interface FsRenameReq { type: 'fs.rename'; id: string; from: string; to: string }
+export interface FsRenameRes { type: 'fs.rename.res'; id: string; ok: boolean; error?: string }
+
+export interface FsDeleteReq { type: 'fs.delete'; id: string; path: string; recursive?: boolean }
+export interface FsDeleteRes { type: 'fs.delete.res'; id: string; ok: boolean; error?: string }
+
+// ── Git ──────────────────────────────────────────────────────────────────
+// `repo` is a directory inside root; every git command runs with cwd = repo.
+
+export interface GitStatusReq { type: 'git.status'; id: string; repo: string }
+export interface GitStatusRes {
+  type: 'git.status.res'; id: string; ok: true; repo: string;
+  branch: string;
+  ahead: number; behind: number;
+  files: { path: string; index: string; worktree: string }[];
+}
+export interface GitStatusErr { type: 'git.status.res'; id: string; ok: false; error: string }
+
+export interface GitDiffReq { type: 'git.diff'; id: string; repo: string; staged?: boolean; path?: string }
+export interface GitDiffRes { type: 'git.diff.res'; id: string; ok: true; diff: string }
+export interface GitDiffErr { type: 'git.diff.res'; id: string; ok: false; error: string }
+
+export interface GitCommitReq { type: 'git.commit'; id: string; repo: string; message: string; all?: boolean }
+export interface GitCommitRes { type: 'git.commit.res'; id: string; ok: boolean; error?: string }
+
+export interface GitPushReq { type: 'git.push'; id: string; repo: string }
+export interface GitPushRes { type: 'git.push.res'; id: string; ok: boolean; error?: string }
+
+export interface GitLogReq { type: 'git.log'; id: string; repo: string; limit?: number }
+export interface GitLogRes {
+  type: 'git.log.res'; id: string; ok: true;
+  commits: { hash: string; author: string; date: string; subject: string }[];
+}
+export interface GitLogErr { type: 'git.log.res'; id: string; ok: false; error: string }
+
+// ── Limits (guardrails, not features) ────────────────────────────────────
+export const MAX_WRITE_BYTES = 100 * 1024;         // 100 KB per fs.write
+export const MAX_READ_BYTES = 10 * 1024 * 1024;    // 10 MB per fs.read
+export const MAX_GIT_LOG = 200;
+export const MAX_GIT_DIFF_BYTES = 2 * 1024 * 1024;
+
 // ── App frames ───────────────────────────────────────────────────────────
 export type ClientToAgent =
   | TermOpenReq | TermCloseReq | TermListReq
-  | TermInput | TermResize;
+  | TermInput | TermResize
+  | FsListReq | FsReadReq | FsWriteReq | FsMkdirReq | FsRenameReq | FsDeleteReq
+  | GitStatusReq | GitDiffReq | GitCommitReq | GitPushReq | GitLogReq;
 
 export type AgentToClient =
   | TermOpenRes | TermOpenErr | TermCloseRes | TermListRes
-  | TermData | TermExit;
+  | TermData | TermExit
+  | FsListRes | FsListErr | FsReadRes | FsReadErr | FsWriteRes | FsWriteErr
+  | FsMkdirRes | FsRenameRes | FsDeleteRes
+  | GitStatusRes | GitStatusErr | GitDiffRes | GitDiffErr
+  | GitCommitRes | GitPushRes | GitLogRes | GitLogErr;
 
 export type AnyFrame =
   | ClientToAgent | AgentToClient

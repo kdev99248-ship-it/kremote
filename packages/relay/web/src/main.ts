@@ -3,10 +3,13 @@ import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import {
+  connect, isConnected, send, rpc, onFrame,
+} from './conn';
+import { FileTree, Editor } from './files';
 
 // One WS to the relay; multiple terminal tabs multiplexed over it by termId.
-
-const PROTOCOL_VERSION = 1;
+// Views: Terminals | Files | Git — switched by the header buttons.
 
 interface Tab {
   termId: string;
@@ -31,106 +34,64 @@ const terminalsEl = $('terminals');
 const newTabBtn = $('new-tab');
 const connState = $('conn-state');
 
-let ws: WebSocket | null = null;
 let tabs: Tab[] = [];
 let active: Tab | null = null;
 let reqSeq = 0;
 const pendingOpens = new Map<string, (termId: string | null) => void>();
 let reconnectTimer: number | undefined;
 
+// ── View switching ─────────────────────────────────────────────────────
+const VIEWS = ['terminals', 'files', 'git'] as const;
+type ViewName = (typeof VIEWS)[number];
+let currentView: ViewName = 'terminals';
+
+let fileTree: FileTree | null = null;
+let editor: Editor | null = null;
+
+function switchView(name: ViewName): void {
+  currentView = name;
+  for (const v of VIEWS) {
+    const el = $(v);
+    el.hidden = v !== name;
+  }
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
+    btn.classList.toggle('active', btn.dataset.view === name);
+  }
+  // Fit the terminal when switching back to it (layout may have changed).
+  if (name === 'terminals' && active) fitSoon(active);
+  // Mobile keys only matter for the terminal view.
+  const mk = document.getElementById('mobile-keys');
+  if (mk) mk.style.display = name === 'terminals' ? '' : 'none';
+  if (name === 'files' && fileTree) fileTree.refresh();
+}
+
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
+  btn.addEventListener('click', () => {
+    const name = btn.dataset.view as ViewName;
+    if (VIEWS.includes(name)) switchView(name);
+  });
+}
+
+// ── Hello / connection lifecycle ───────────────────────────────────────
 // Pre-fill ?key= from the agent's printed URL.
 const urlKey = new URLSearchParams(location.search).get('key');
 if (urlKey) accessKeyInput.value = urlKey.toUpperCase();
 
-function connect(accessKey: string): void {
+function connectWithKey(accessKey: string): void {
   setStatus('off');
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-
-  ws.onopen = () => {
-    send({ type: 'hello.client', accessKey, protocol: PROTOCOL_VERSION });
-  };
-
-  ws.onmessage = (ev) => {
-    let frame: any;
-    try { frame = JSON.parse(ev.data as string); } catch { return; }
-    handle(frame);
-  };
-
-  ws.onclose = () => {
-    setStatus('off');
-    ws = null;
-    markAllDead('disconnected');
-    // The access key was one-time; go back to login rather than looping.
-    showLogin('Connection closed. Get a new access key from the agent.');
-  };
-
-  ws.onerror = () => { /* onclose follows */ };
-}
-
-function send(frame: object): void {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
-}
-
-function handle(frame: any): void {
-  switch (frame.type) {
-    case 'hello.res':
-      if (frame.ok) {
-        setStatus('on');
-        showApp();
-        if (tabs.length === 0) void newTab();
-      } else {
-        showLogin(frame.error ?? 'rejected');
-      }
-      return;
-
-    case 'term.open.res': {
-      const cb = pendingOpens.get(frame.id);
-      if (!cb) return;
-      pendingOpens.delete(frame.id);
-      if (frame.ok) cb(frame.termId);
-      else {
-        cb(null);
-        showLogin(frame.error ?? 'could not open terminal');
-      }
-      return;
-    }
-
-    case 'term.data': {
-      const tab = byTermId(frame.termId);
-      if (tab) tab.term.write(frame.data);
-      return;
-    }
-
-    case 'term.exit': {
-      const tab = byTermId(frame.termId);
-      if (tab) {
-        tab.dead = true;
-        tab.tabEl.classList.add('dead');
-        tab.term.write(`\r\n\x1b[90m[process exited${frame.code != null ? ` code ${frame.code}` : ''}]\x1b[0m\r\n`);
-      }
-      return;
-    }
-
-    case 'peer.gone':
-      markAllDead('agent offline');
+  connect(accessKey, {
+    onHelloOk: () => {
+      setStatus('on');
+      showApp();
+      if (tabs.length === 0) void newTab();
+    },
+    onHelloErr: (msg) => showLogin(msg),
+    onClosed: (msg) => {
       setStatus('off');
-      return;
-  }
-}
-
-function byTermId(termId: string): Tab | undefined {
-  return tabs.find(t => t.termId === termId);
-}
-
-function markAllDead(reason: string): void {
-  for (const t of tabs) {
-    if (!t.dead) {
-      t.dead = true;
-      t.tabEl.classList.add('dead');
-      t.term.write(`\r\n\x1b[33m[${reason}]\x1b[0m\r\n`);
-    }
-  }
+      markAllDead('disconnected');
+      showLogin(msg);
+    },
+  });
 }
 
 function setStatus(state: 'on' | 'off'): void {
@@ -148,10 +109,51 @@ function showLogin(msg: string): void {
 function showApp(): void {
   loginScreen.hidden = true;
   appScreen.hidden = false;
+  if (!fileTree) {
+    fileTree = new FileTree($('file-tree'), (path) => void editor?.openFile(path));
+    editor = new Editor($('editor'), {
+      onSave: () => fileTree?.refresh(),
+    });
+  }
+  switchView('terminals');
+}
+
+onFrame('peer.gone', () => {
+  markAllDead('agent offline');
+  setStatus('off');
+});
+
+// ── Terminal tabs ──────────────────────────────────────────────────────
+onFrame('term.data', (f) => {
+  const tab = byTermId(f.termId);
+  if (tab) tab.term.write(f.data);
+});
+
+onFrame('term.exit', (f) => {
+  const tab = byTermId(f.termId);
+  if (tab) {
+    tab.dead = true;
+    tab.tabEl.classList.add('dead');
+    tab.term.write(`\r\n\x1b[90m[process exited${f.code != null ? ` code ${f.code}` : ''}]\x1b[0m\r\n`);
+  }
+});
+
+function byTermId(termId: string): Tab | undefined {
+  return tabs.find(t => t.termId === termId);
+}
+
+function markAllDead(reason: string): void {
+  for (const t of tabs) {
+    if (!t.dead) {
+      t.dead = true;
+      t.tabEl.classList.add('dead');
+      t.term.write(`\r\n\x1b[33m[${reason}]\x1b[0m\r\n`);
+    }
+  }
 }
 
 async function newTab(): Promise<void> {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!isConnected()) return;
   const id = `open${++reqSeq}`;
 
   const term = new Terminal({
@@ -178,7 +180,6 @@ async function newTab(): Promise<void> {
   const x = document.createElement('button');
   x.className = 'x';
   x.textContent = '×';
-  x.title = 'Close';
   tabEl.append(label, x);
   tabsEl.appendChild(tabEl);
 
@@ -251,7 +252,7 @@ function closeTab(tab: Tab, skipServer = false): void {
   tab.host.remove();
   tab.tabEl.remove();
   if (active === tab) activate(tabs[tabs.length - 1] ?? null!);
-  if (tabs.length === 0 && ws?.readyState === WebSocket.OPEN) void newTab();
+  if (tabs.length === 0 && isConnected()) void newTab();
 }
 
 newTabBtn.addEventListener('click', () => void newTab());
@@ -261,20 +262,18 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && active) fitSoon(active);
 });
 
+// ── Login form ─────────────────────────────────────────────────────────
 loginForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const key = accessKeyInput.value.trim().toUpperCase();
   if (!key) return;
   loginError.hidden = true;
   loginForm.querySelector('button')!.setAttribute('disabled', '');
-  connect(key);
+  connectWithKey(key);
   setTimeout(() => loginForm.querySelector('button')!.removeAttribute('disabled'), 1500);
 });
 
-// ── Mobile modifier keys ──────────────────────────────────────────────
-// Sticky modifiers: tap Ctrl, then type → sends \x1b-ish control bytes via
-// xterm's attachCustomKeyEventHandler is not needed; we inject sequences
-// directly for the seq buttons and hold modifiers for the next real key.
+// ── Mobile modifier keys ───────────────────────────────────────────────
 const heldModifiers = new Set<string>();
 const mobileKeys = document.getElementById('mobile-keys')!;
 
@@ -300,11 +299,10 @@ function unescapeSeq(s: string): string {
           .replace(/\\t/g, '\t');
 }
 
-// Apply held Ctrl to the next keystroke typed on the soft keyboard.
 document.addEventListener('keydown', (e) => {
   if (!active || heldModifiers.size === 0) return;
   if (e.key.length === 1 && heldModifiers.has('Control')) {
-    const code = e.key.toUpperCase().charCodeAt(0) - 64; // Ctrl+A → 1
+    const code = e.key.toUpperCase().charCodeAt(0) - 64;
     if (code >= 0 && code <= 31) {
       e.preventDefault();
       send({ type: 'term.input', termId: active.termId, data: String.fromCharCode(code) });

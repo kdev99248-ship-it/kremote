@@ -21,11 +21,30 @@
   <!-- Terminal workspace -->
   <div id="app" class="screen" hidden>
     <header id="tabbar">
+      <nav id="view-switcher">
+        <button class="view-btn active" data-view="terminals">Term</button>
+        <button class="view-btn" data-view="files">Files</button>
+        <button class="view-btn" data-view="git">Git</button>
+      </nav>
       <div id="tabs"></div>
       <button id="new-tab" title="New terminal (Ctrl+Shift+T)">+</button>
       <span id="conn-state" title="Connection state"></span>
     </header>
-    <main id="terminals"></main>
+
+    <!-- Terminals view -->
+    <main id="terminals" class="view"></main>
+
+    <!-- Files view -->
+    <main id="files" class="view" hidden>
+      <div id="file-tree"></div>
+      <div id="editor"></div>
+    </main>
+
+    <!-- Git view -->
+    <main id="git" class="view" hidden>
+      <div id="git-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;background:#101418;color:#8b95a1;">Git panel — coming soon</div>
+    </main>
+
     <footer id="mobile-keys">
       <button data-key="Control">Ctrl</button>
       <button data-key="Alt">Alt</button>

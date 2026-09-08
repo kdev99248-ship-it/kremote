@@ -2,22 +2,29 @@ import { WebSocket } from 'ws';
 import { decode, encode, PROTOCOL_VERSION } from '@kremote/shared';
 import type { AnyFrame, ClientToAgent } from '@kremote/shared';
 import { TermManager, DEFAULT_SHELL } from './term.ts';
+import { FsError, FsHandlers } from './fs.ts';
+import { GitRunner } from './git.ts';
 import type { AgentConfig } from './config.ts';
 
 // Dials the relay, stays connected (exponential backoff reconnect), and
-// bridges protocol frames ↔ TermManager. Terminal content is never parsed.
+// bridges protocol frames ↔ TermManager / FsHandlers / GitRunner. Terminal
+// content is never parsed.
 
 export class AgentClient {
   private ws: WebSocket | null = null;
   private retry = 0;
   private closed = false;
   private terms = new TermManager();
+  private readonly fs: FsHandlers;
+  private readonly git: GitRunner;
   private pendingAccessKey = new Map<string, (r: { key: string; url: string; expiresMs: number }) => void>();
   private accessKeySeq = 0;
   private readonly cfg: AgentConfig;
 
   constructor(cfg: AgentConfig) {
     this.cfg = cfg;
+    this.fs = new FsHandlers(cfg.root ?? process.cwd());
+    this.git = new GitRunner(this.fs);
     this.terms.on('data', (termId, data) => this.send({ type: 'term.data', termId, data } as AnyFrame));
     this.terms.on('exit', (termId, code) => this.send({ type: 'term.exit', termId, code } as AnyFrame));
   }
@@ -77,7 +84,7 @@ export class AgentClient {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encode(frame));
   }
 
-  private handle(frame: AnyFrame): void {
+  private async handle(frame: AnyFrame): Promise<void> {
     switch (frame.type) {
       case 'hello.res':
         if (!frame.ok) console.error(`[agent] relay rejected hello: ${frame.error}`);
@@ -122,10 +129,129 @@ export class AgentClient {
         return;
       }
 
+      // ── Files ──────────────────────────────────────────────────────────
+      case 'fs.list': {
+        const f = frame as any;
+        try {
+          const r = await this.fs.list(f.path);
+          this.send({ type: 'fs.list.res', id: f.id, ok: true, ...r } as AnyFrame);
+        } catch (e) { this.send(this.fsErr('fs.list.res', f.id, e)); }
+        return;
+      }
+
+      case 'fs.read': {
+        const f = frame as any;
+        try {
+          const r = await this.fs.read(f.path);
+          this.send({ type: 'fs.read.res', id: f.id, ok: true, ...r } as AnyFrame);
+        } catch (e) { this.send(this.fsErr('fs.read.res', f.id, e)); }
+        return;
+      }
+
+      case 'fs.write': {
+        const f = frame as any;
+        try {
+          const r = await this.fs.write(f.path, f.content, f.baseMtimeMs);
+          this.send({ type: 'fs.write.res', id: f.id, ok: true, ...r } as AnyFrame);
+        } catch (e) {
+          const res = this.fsErr('fs.write.res', f.id, e);
+          if (e instanceof FsError && e.conflict) {
+            (res as any).conflict = true;
+            (res as any).serverMtimeMs = e.serverMtimeMs;
+          }
+          this.send(res);
+        }
+        return;
+      }
+
+      case 'fs.mkdir': {
+        const f = frame as any;
+        try {
+          await this.fs.mkdir(f.path);
+          this.send({ type: 'fs.mkdir.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e) { this.send(this.fsErr('fs.mkdir.res', f.id, e)); }
+        return;
+      }
+
+      case 'fs.rename': {
+        const f = frame as any;
+        try {
+          await this.fs.rename(f.from, f.to);
+          this.send({ type: 'fs.rename.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e) { this.send(this.fsErr('fs.rename.res', f.id, e)); }
+        return;
+      }
+
+      case 'fs.delete': {
+        const f = frame as any;
+        try {
+          await this.fs.delete(f.path, f.recursive);
+          this.send({ type: 'fs.delete.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e) { this.send(this.fsErr('fs.delete.res', f.id, e)); }
+        return;
+      }
+
+      // ── Git ────────────────────────────────────────────────────────────
+      case 'git.status': {
+        const f = frame as any;
+        try {
+          const r = await this.git.status(f.repo);
+          this.send({ type: 'git.status.res', id: f.id, ok: true, repo: f.repo, ...r } as AnyFrame);
+        } catch (e) { this.send(this.gitErr('git.status.res', f.id, e)); }
+        return;
+      }
+
+      case 'git.diff': {
+        const f = frame as any;
+        try {
+          const diff = await this.git.diff(f.repo, { staged: f.staged, path: f.path });
+          this.send({ type: 'git.diff.res', id: f.id, ok: true, diff } as AnyFrame);
+        } catch (e) { this.send(this.gitErr('git.diff.res', f.id, e)); }
+        return;
+      }
+
+      case 'git.commit': {
+        const f = frame as any;
+        try {
+          await this.git.commit(f.repo, f.message, f.all);
+          this.send({ type: 'git.commit.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e) { this.send(this.gitErr('git.commit.res', f.id, e)); }
+        return;
+      }
+
+      case 'git.push': {
+        const f = frame as any;
+        try {
+          await this.git.push(f.repo);
+          this.send({ type: 'git.push.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e) { this.send(this.gitErr('git.push.res', f.id, e)); }
+        return;
+      }
+
+      case 'git.log': {
+        const f = frame as any;
+        try {
+          const commits = await this.git.log(f.repo, f.limit);
+          this.send({ type: 'git.log.res', id: f.id, ok: true, commits } as AnyFrame);
+        } catch (e) { this.send(this.gitErr('git.log.res', f.id, e)); }
+        return;
+      }
+
       default:
         // Unknown/irrelevant frame — ignore.
         return;
     }
+  }
+
+  /** Normalize any throw into a `*.res` error frame. */
+  private fsErr(type: string, id: string, e: unknown): AnyFrame {
+    const error = e instanceof FsError ? e.message : (e as Error)?.message ?? String(e);
+    return { type, id, ok: false, error } as AnyFrame;
+  }
+
+  private gitErr(type: string, id: string, e: unknown): AnyFrame {
+    const error = (e as Error)?.message ?? String(e);
+    return { type, id, ok: false, error } as AnyFrame;
   }
 
   private handleTermOpen(f: any): void {
