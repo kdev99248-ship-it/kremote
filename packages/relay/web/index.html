@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>kremote</title>
+</head>
+<body>
+  <!-- Login: ACCESS_KEY gate -->
+  <div id="login" class="screen">
+    <form id="login-form">
+      <h1>kremote</h1>
+      <label for="access-key">Access key</label>
+      <input id="access-key" type="text" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" placeholder="XXXXXXXX" maxlength="16" />
+      <button type="submit">Connect</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </div>
+
+  <!-- Terminal workspace -->
+  <div id="app" class="screen" hidden>
+    <header id="tabbar">
+      <div id="tabs"></div>
+      <button id="new-tab" title="New terminal (Ctrl+Shift+T)">+</button>
+      <span id="conn-state" title="Connection state"></span>
+    </header>
+    <main id="terminals"></main>
+    <footer id="mobile-keys">
+      <button data-key="Control">Ctrl</button>
+      <button data-key="Alt">Alt</button>
+      <button data-key="Shift">Shift</button>
+      <button data-seq="\x1b">Esc</button>
+      <button data-seq="\t">Tab</button>
+      <button data-seq="\x1b[A">↑</button>
+      <button data-seq="\x1b[B">↓</button>
+      <button data-seq="\x1b[C">→</button>
+      <button data-seq="\x1b[D">←</button>
+      <button data-seq="|">|</button>
+      <button data-seq="/">/</button>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

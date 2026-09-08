@@ -1,0 +1,17 @@
+{
+  "name": "@kremote/relay",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node src/index.ts",
+    "keygen": "node src/keygen.ts"
+  },
+  "dependencies": {
+    "@kremote/shared": "*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
+}

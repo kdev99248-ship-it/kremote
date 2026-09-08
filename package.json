@@ -1,0 +1,30 @@
+{
+  "name": "kremote",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/agent",
+    "packages/relay",
+    "packages/relay/web"
+  ],
+  "scripts": {
+    "test": "node --test packages/shared/test/*.test.ts packages/relay/test/*.test.ts packages/agent/test/*.test.ts",
+    "relay": "node packages/relay/src/index.ts",
+    "relay:keygen": "node packages/relay/src/keygen.ts",
+    "agent": "node packages/agent/src/index.ts",
+    "web:dev": "npm run dev --workspace @kremote/web",
+    "web:build": "npm run build --workspace @kremote/web",
+    "typecheck": "tsc -b packages/shared packages/agent packages/relay"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true,
+    "esbuild@0.25.12": true
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,6 @@
+node_modules/
+packages/relay/public/
+.tmp-tscheck/
+.playwright-mcp/
+.serena/
+*.log
