@@ -29,10 +29,33 @@ export class GitError extends Error {
   }
 }
 
+/** HTTPS push credentials (optional). Token is a PAT; username defaults to
+ * `x-access-token` (works for GitHub fine-grained/classic PATs). */
+export interface GitCredentials {
+  username?: string;
+  token: string;
+}
+
+// stderr fingerprints that mean "couldn't authenticate", not a normal failure.
+// Matched case-insensitively; used to turn a raw git error into an EAUTH hint.
+const AUTH_FAIL_PATTERNS = [
+  /authentication failed/i,
+  /could not read username/i,
+  /could not read password/i,
+  /terminal prompts disabled/i,
+  /permission denied \(publickey\)/i,
+  /invalid username or (password|token)/i,
+  /remote: (support for password authentication|invalid credentials)/i,
+  /fatal: unable to access/i,
+  /\b(401|403)\b/,
+];
+
 export class GitRunner {
   private readonly fs: FsHandlers;
-  constructor(fs: FsHandlers) {
+  private readonly creds?: GitCredentials;
+  constructor(fs: FsHandlers, creds?: GitCredentials) {
     this.fs = fs;
+    this.creds = creds && creds.token ? creds : undefined;
   }
 
   /**
@@ -56,14 +79,39 @@ export class GitRunner {
 
   /**
    * Run a git command in the repo directory, capturing stdout/stderr.
-   * Throws GitError if exit code != 0.
+   * Throws GitError if exit code != 0. When `auth` is set and credentials are
+   * configured, injects them via an in-process credential helper — the token
+   * travels only in the child's env, never in argv or on disk.
    */
-  private async runGit(repoAbs: string, args: string[], options: { timeout?: number; maxBuffer?: number } = {}): Promise<{ stdout: string; stderr: string }> {
-    const { timeout = 30000, maxBuffer = 10 * 1024 * 1024 } = options;
+  private async runGit(
+    repoAbs: string,
+    args: string[],
+    options: { timeout?: number; maxBuffer?: number; auth?: boolean } = {},
+  ): Promise<{ stdout: string; stderr: string }> {
+    const { timeout = 30000, maxBuffer = 10 * 1024 * 1024, auth = false } = options;
+    // Never let git block on an interactive credential/SSH prompt: this is an
+    // unattended daemon, so a missing credential must fail fast, not hang.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_OPTIONAL_LOCKS: '0',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never',
+      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+    };
+    let finalArgs = args;
+    if (auth && this.creds) {
+      // credential.helper runs via `sh -c`; it echoes the username/token from
+      // env, so the PAT is never an argv element (invisible to `ps`). Clear any
+      // inherited helper first (empty value) so ours is the only one consulted.
+      const helper = "!f() { echo \"username=${KREMOTE_GIT_USER}\"; echo \"password=${KREMOTE_GIT_TOKEN}\"; }; f";
+      finalArgs = ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`, ...args];
+      env.KREMOTE_GIT_USER = this.creds.username || 'x-access-token';
+      env.KREMOTE_GIT_TOKEN = this.creds.token;
+    }
     return new Promise((resolve, reject) => {
-      const proc = spawn('git', args, {
+      const proc = spawn('git', finalArgs, {
         cwd: repoAbs,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout,
       });
@@ -73,7 +121,12 @@ export class GitRunner {
       proc.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); if (stderr.length > maxBuffer) proc.kill('SIGKILL'); });
       proc.on('close', (code, signal) => {
         if (code !== 0) {
-          const err = new GitError(`git ${args[0]} failed: ${stderr || stdout || 'unknown error'}`, 'GIT_ERROR');
+          const detail = stderr || stdout || 'unknown error';
+          const isAuth = AUTH_FAIL_PATTERNS.some((re) => re.test(detail));
+          const msg = isAuth
+            ? `git ${args[0]}: authentication failed. ${this.creds ? 'Check the configured token (gitCredentials).' : 'No credentials configured — set gitCredentials in the agent config, or use an SSH remote with a key.'}\n${detail.trim()}`
+            : `git ${args[0]} failed: ${detail}`;
+          const err = new GitError(msg, isAuth ? 'EAUTH' : 'GIT_ERROR');
           (err as any).exitCode = code;
           (err as any).signal = signal;
           reject(err);
@@ -152,7 +205,7 @@ export class GitRunner {
 
   async push(repo: string): Promise<void> {
     const abs = await this.resolveRepo(repo);
-    await this.runGit(abs, ['push'], { timeout: 120000 });
+    await this.runGit(abs, ['push'], { timeout: 120000, auth: true });
   }
 
   async log(repo: string, limit = 20): Promise<GitCommit[]> {

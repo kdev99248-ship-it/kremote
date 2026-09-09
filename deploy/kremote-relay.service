@@ -1,0 +1,34 @@
+[Unit]
+Description=kremote relay (WSS pairing + web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SVC_USER@
+Group=@SVC_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/kremote/relay.env
+# Node 24 runs the .ts entrypoint directly (same as local dev).
+ExecStart=/usr/bin/node @APP_DIR@/packages/relay/src/index.ts
+Restart=on-failure
+RestartSec=2
+
+# Bind :443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening — the relay only needs to read code + its store dir.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Writable paths: the JSON store and the TLS drop dir it watches.
+ReadWritePaths=/home/@SVC_USER@/.kremote-relay
+ReadOnlyPaths=/etc/kremote/tls
+
+[Install]
+WantedBy=multi-user.target

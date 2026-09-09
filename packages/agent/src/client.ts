@@ -26,7 +26,7 @@ export class AgentClient {
   constructor(cfg: AgentConfig) {
     this.cfg = cfg;
     this.fs = new FsHandlers(cfg.root ?? process.cwd());
-    this.git = new GitRunner(this.fs);
+    this.git = new GitRunner(this.fs, cfg.gitCredentials);
     this.terms.on('data', (termId, data) => this.send({ type: 'term.data', termId, data } as AnyFrame));
     this.terms.on('exit', (termId, code) => this.send({ type: 'term.exit', termId, code } as AnyFrame));
   }

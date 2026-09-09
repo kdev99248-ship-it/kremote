@@ -149,9 +149,57 @@ Mục tiêu: đưa các handler `fs.*` đã có lên web UI trong Files view.
 ## 📌 Việc tiếp theo (theo spec)
 
 1. ~~Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.~~ ✅ XONG (mục 🖱 ở trên).
-2. Xử lý push cần credential (SSH/PAT) — hiện chỉ chạy `git push` thô.
+2. ~~Xử lý push cần credential (SSH/PAT) — hiện chỉ chạy `git push` thô.~~ ✅ XONG (mục 🔑 ở dưới).
 3. ~~Cân nhắc auth mạnh hơn cho relay khi deploy VPS (rate‑limit, TLS).~~ ✅ XONG (mục 🔒 ở trên).
-4. Deploy thử lên VPS + test từ điện thoại thật.
+4. ~~Deploy thử lên VPS + test từ điện thoại thật.~~ ⏳ Bộ script deploy đã xong (mục 🚀 ở dưới); **còn lại: chạy thật trên VPS + test điện thoại thật**.
+
+---
+
+## 🔑 Git push credential (SSH/PAT) — mới
+
+Mục tiêu: `git push` chạy được khi cần xác thực, không treo máy (unattended daemon).
+
+- **`git.ts`** — `GitRunner` nhận `creds?: GitCredentials` (`{username?, token}`):
+  - `runGit(..., {auth:true})` tiêm credential qua **in-process credential helper**
+    (`credential.helper=!f(){ echo username=$KREMOTE_GIT_USER; echo password=$KREMOTE_GIT_TOKEN; }; f`):
+    token đi qua **env của child**, không nằm trong argv (ẩn với `ps`), không ghi ra đĩa.
+    Xoá helper kế thừa (`credential.helper=` rỗng) trước để chỉ helper của ta được gọi.
+  - **Chống treo**: mọi lệnh git đặt `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`,
+    `GIT_SSH_COMMAND='ssh -o BatchMode=yes'` → thiếu credential thì lỗi ngay, không chờ prompt.
+  - **Phân loại lỗi auth**: khớp stderr với `AUTH_FAIL_PATTERNS` → `GitError` code `EAUTH`
+    kèm hint rõ ràng (có/không có creds cấu hình). UI git panel đã hiện `res.error` nên
+    thông báo tới người dùng tự động.
+  - Chỉ `push` dùng `auth:true` (status/diff/commit/log là local).
+- **Config** (`config.ts`): thêm `gitCredentials?: {username?, token}`. Env override
+  `KREMOTE_GIT_TOKEN` / `KREMOTE_GIT_USER` (giữ token ngoài file config khi chạy service).
+  Default username `x-access-token` (hợp GitHub PAT). Wiring vào `AgentClient`.
+- **SSH remote**: không cần cấu hình gì — dùng OS ssh key qua `BatchMode=yes`.
+- **Kiểm thử**: `npm test` **60/60** (+2: push bad token → `EAUTH`; push không creds → fail fast,
+  không treo). typecheck sạch.
+
+---
+
+## 🚀 Deploy kit cho VPS (TLS nhúng Node) — mới
+
+Mục tiêu: script hoá việc dựng relay trên VPS công khai, TLS terminate trong Node (không reverse proxy).
+
+- **`deploy/setup-vps.sh`** (chạy 1 lần trên VPS): cài Node 24 + certbot, tạo user hệ thống
+  `kremote`, cấp cert Let's Encrypt (`certbot --standalone`), cài **renewal deploy-hook**
+  copy cert vào `/etc/kremote/tls/` (relay watch dir này → hot‑reload, gia hạn không cần restart),
+  cài systemd unit + `/etc/kremote/relay.env`, `setcap`/`AmbientCapabilities` để bind :443 không cần root.
+- **`deploy/kremote-relay.service`**: systemd unit đã hardening (`ProtectSystem=strict`,
+  `NoNewPrivileges`, `ReadWritePaths` chỉ store dir, `CAP_NET_BIND_SERVICE`). Node chạy thẳng `.ts`.
+- **`deploy/deploy.sh`** (chạy từ máy dev): build web local → rsync `relay`+`shared`+`public`
+  lên VPS (KHÔNG gửi node-pty; relay thuần JS chỉ cần `ws`), cài `ws` + symlink `@kremote/shared`,
+  restart service. Chạy lại mỗi lần đổi code.
+- **`deploy/relay.env.example`** + **`deploy/README.md`** (hướng dẫn đầy đủ: DNS, cấp key, cấu hình agent,
+  git push creds, troubleshoot).
+- **Kiểm thử runtime local** (giả lập VPS, self‑signed cert, env y hệt deploy):
+  - Relay boot `https://…:8443 [TLS]`, `/healthz` OK, serve web UI.
+  - WSS handshake OK; hello sai key → `hello.res{ok:false}` + close `4003` + audit `auth-fail`.
+  - Ghi đè cert → log `tls-reload`, vẫn serve với cert mới không restart (đúng đường certbot renewal).
+  - `bash -n` sạch cả 2 script.
+- **Còn lại**: chạy thật trên một VPS + test từ điện thoại thật (4G latency, mobile keys, scrollback).
 
 ---
 

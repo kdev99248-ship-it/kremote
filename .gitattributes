@@ -1,0 +1,5 @@
+# Shell scripts + systemd units run on the Linux VPS — force LF regardless of
+# the checkout platform, so CRLF from Windows never breaks them.
+*.sh            text eol=lf
+*.service       text eol=lf
+deploy/*.env*   text eol=lf

@@ -235,5 +235,40 @@ async function withTempRoot(
       );
     });
   });
+
+  test('git.push classifies auth failure as EAUTH (bad token, no prompt hang)', async () => {
+    await withTempRepo(async (root, fs) => {
+      // Commit something, then point origin at an https URL that will 401.
+      await writeFile(join(root, 'a.txt'), 'x', 'utf8');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'first');
+      git(root, 'remote', 'add', 'origin', 'https://127.0.0.1:1/nonexistent/repo.git');
+      git(root, 'config', 'branch.main.remote', 'origin');
+      git(root, 'config', 'branch.main.merge', 'refs/heads/main');
+      // Runner WITH a bogus token: helper supplies creds, so git won't prompt;
+      // the connection/auth fails fast and must surface as EAUTH.
+      const runner = new GitRunner(fs, { token: 'bogus-token' });
+      await assert.rejects(
+        () => runner.push('.'),
+        (err: unknown) => err instanceof GitError && err.code === 'EAUTH',
+      );
+    });
+  });
+
+  test('git.push without credentials fails fast (no interactive hang)', async () => {
+    await withTempRepo(async (root, _fs, runner) => {
+      await writeFile(join(root, 'a.txt'), 'x', 'utf8');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'first');
+      git(root, 'remote', 'add', 'origin', 'https://127.0.0.1:1/nonexistent/repo.git');
+      git(root, 'config', 'branch.main.remote', 'origin');
+      git(root, 'config', 'branch.main.merge', 'refs/heads/main');
+      // No creds configured: GIT_TERMINAL_PROMPT=0 must make it error, not block.
+      await assert.rejects(
+        () => runner.push('.'),
+        (err: unknown) => err instanceof GitError,
+      );
+    });
+  });
 })();
 
