@@ -224,6 +224,27 @@ Mục tiêu: script hoá việc dựng relay trên VPS công khai, TLS terminate
 
 ---
 
+## 📱 Mobile terminal: composer tiếng Việt + pwsh UTF‑8 + clear thật — mới
+
+Ba vấn đề mobile: (1) xterm textarea phá IME gõ tiếng Việt, (2) PowerShell 5.1
+codepage legacy làm hỏng UTF‑8, (3) `cls`/`clear` không xoá scrollback.
+
+- **Composer IME‑safe** (`web/index.html`, `main.ts`, `style.css`): ô input DOM chuẩn
+  trong footer mobile, chặn gửi khi đang compose (`compositionstart/end` + `keydown`),
+  Enter gửi cả dòng — Telex/VNI hoạt động vì không đi qua xterm textarea.
+- **Agent shell** (`agent/src/term.ts`): ưu tiên `pwsh.exe` (PowerShell 7, UTF‑8 mặc định),
+  fallback `powershell.exe` bọc `chcp 65001`. Giữ contract `data`/`exit` của TermManager.
+- **Clear thật** (`web/src/clear.ts` + hook trong `main.ts`): ConPTY không bao giờ gửi
+  `ESC[3J` — probe thật trên Win10 PS 5.1 cho thấy `cls` chỉ emit `ESC[H` + burst `ESC[K`
+  (30 dòng), `2J` thường không xuất hiện. Detector `looksLikeClear` nhận cả 2 shape
+  (`2J`, hoặc `H` + ≥3 `K` — full burst luôn nằm trong 1 chunk, dưới giới hạn ~4 KB),
+  web tự append `ESC[3J` → scrollback xoá thật.
+- **Kiểm thử**: `npm test` **67/67** (+4 unit cho detector, dùng chunk ConPTY thật).
+  Browser E2E (CDP input thật): flood 60 dòng → scrollArea 1054px, sau `cls` còn 493px
+  = đúng viewport, màn hình trống chỉ còn prompt.
+
+---
+
 *Cập nhật lúc 2026-09-09 sau khi hoàn thiện file explorer + editor (code‑split) + git panel và smoke test 13/13.*
 
 *Cập nhật lúc 2026-09-09 (chiều): redesign terminal (window chrome kiểu macOS) + session sống sót/auto‑reconnect/đăng nhập bền — test 49/49, build sạch. Đã commit 9a3f756.*
