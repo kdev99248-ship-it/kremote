@@ -11,7 +11,7 @@ export interface TermOpenReq {
   rows?: number;
   cwd?: string;
 }
-export interface TermOpenRes { type: 'term.open.res'; id: string; termId: string; ok: true }
+export interface TermOpenRes { type: 'term.open.res'; id: string; termId: string; ok: true; cwd: string; shell: string }
 export interface TermOpenErr { type: 'term.open.res'; id: string; ok: false; error: string }
 
 export interface TermCloseReq { type: 'term.close'; id: string; termId: string }
@@ -22,6 +22,12 @@ export interface TermListRes {
   type: 'term.list.res'; id: string;
   terms: { termId: string; shell: string; cwd: string }[];
 }
+
+// Reattach to a terminal that outlived the browser (reconnect): the agent
+// resizes the pty to the new viewport and replays its scrollback buffer.
+export interface TermAttachReq { type: 'term.attach'; id: string; termId: string; cols?: number; rows?: number }
+export interface TermAttachRes { type: 'term.attach.res'; id: string; ok: true; termId: string; data: string; cwd: string; shell: string }
+export interface TermAttachErr { type: 'term.attach.res'; id: string; ok: false; error: string }
 
 // ── Terminal stream (no id: fire-and-forget) ─────────────────────────────
 export interface TermData { type: 'term.data'; termId: string; data: string }   // agent→client
@@ -35,18 +41,25 @@ export interface HelloAgent {
   deviceKey: string;
   protocol: number;
 }
+// A browser authenticates with a one-time ACCESS_KEY on first login, or with a
+// durable SESSION token on silent reconnect (persistent login). Exactly one is
+// expected; the session token wins if both are present.
 export interface HelloClient {
   type: 'hello.client';
-  accessKey: string;
+  accessKey?: string;
+  session?: string;
   protocol: number;
 }
-export interface HelloRes { type: 'hello.res'; ok: boolean; error?: string }
+// On success the relay returns the durable session token so the browser can
+// persist it and reconnect silently later.
+export interface HelloRes { type: 'hello.res'; ok: boolean; error?: string; session?: string }
 
 // Relay→agent only: mint a one-time ACCESS_KEY for the browser.
 export interface AccessKeyReq { type: 'accesskey.req'; id: string }
 export interface AccessKeyRes { type: 'accesskey.res'; id: string; key: string; url: string; expiresMs: number }
 
 export interface PeerGone { type: 'peer.gone' } // relay→ remaining peer when the other side drops
+export interface PeerBack { type: 'peer.back' } // relay→ client when its agent reconnects (re-paired)
 
 // ── Files ────────────────────────────────────────────────────────────────
 // All `path` arguments are relative to the agent's configured root; the agent
@@ -121,13 +134,13 @@ export const MAX_GIT_DIFF_BYTES = 2 * 1024 * 1024;
 
 // ── App frames ───────────────────────────────────────────────────────────
 export type ClientToAgent =
-  | TermOpenReq | TermCloseReq | TermListReq
+  | TermOpenReq | TermCloseReq | TermListReq | TermAttachReq
   | TermInput | TermResize
   | FsListReq | FsReadReq | FsWriteReq | FsMkdirReq | FsRenameReq | FsDeleteReq
   | GitStatusReq | GitDiffReq | GitCommitReq | GitPushReq | GitLogReq;
 
 export type AgentToClient =
-  | TermOpenRes | TermOpenErr | TermCloseRes | TermListRes
+  | TermOpenRes | TermOpenErr | TermCloseRes | TermListRes | TermAttachRes | TermAttachErr
   | TermData | TermExit
   | FsListRes | FsListErr | FsReadRes | FsReadErr | FsWriteRes | FsWriteErr
   | FsMkdirRes | FsRenameRes | FsDeleteRes
@@ -137,7 +150,7 @@ export type AgentToClient =
 export type AnyFrame =
   | ClientToAgent | AgentToClient
   | HelloAgent | HelloClient | HelloRes
-  | AccessKeyReq | AccessKeyRes | PeerGone;
+  | AccessKeyReq | AccessKeyRes | PeerGone | PeerBack;
 
 export const PROTOCOL_VERSION = 1;
 

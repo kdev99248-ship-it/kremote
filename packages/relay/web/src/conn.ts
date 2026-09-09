@@ -16,17 +16,21 @@ const pending = new Map<string, {
 const handlers = new Map<string, ((f: any) => void)[]>();
 
 export interface ConnEvents {
-  onHelloOk: () => void;
+  onHelloOk: (session?: string) => void;
   onHelloErr: (msg: string) => void;
   onClosed: (msg: string) => void;
 }
 
-export function connect(accessKey: string, ev: ConnEvents): void {
+// Credentials: a one-time ACCESS_KEY on first login, or a durable SESSION token
+// on silent reconnect. The relay accepts either.
+export type Credential = { accessKey: string } | { session: string };
+
+export function connect(cred: Credential, ev: ConnEvents): void {
   currentEv = ev;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
 
-  ws.onopen = () => send({ type: 'hello.client', accessKey, protocol: PROTOCOL_VERSION });
+  ws.onopen = () => send({ type: 'hello.client', ...cred, protocol: PROTOCOL_VERSION });
 
   ws.onmessage = (e) => {
     let f: any;
@@ -38,7 +42,7 @@ export function connect(accessKey: string, ev: ConnEvents): void {
     ws = null;
     for (const p of pending.values()) p.reject(new Error('disconnected'));
     pending.clear();
-    ev.onClosed('Connection closed. Get a new access key from the agent.');
+    ev.onClosed('Connection closed.');
   };
 
   ws.onerror = () => { /* onclose follows */ };
@@ -84,7 +88,7 @@ export function onFrame(type: string, h: (f: any) => void): void {
 
 function dispatch(f: any): void {
   if (f.type === 'hello.res' && currentEv) {
-    if (f.ok) currentEv.onHelloOk();
+    if (f.ok) currentEv.onHelloOk(f.session);
     else currentEv.onHelloErr(f.error ?? 'rejected');
     return;
   }

@@ -59,6 +59,21 @@
 
 ---
 
+## 🔁 Session sống sót + auto‑reconnect + đăng nhập bền (mới)
+
+Mục tiêu: rớt mạng / ngủ laptop / mở lại tab → tự kết nối lại **không cần ACCESS_KEY mới**, và terminal đang chạy (Claude Code, harness…) được gắn lại kèm lịch sử.
+
+- **Protocol** (`shared`): `hello.client` nhận `accessKey?` **hoặc** `session?`; `hello.res` trả `session` (token bền 12h). Thêm `term.attach`/`term.attach.res` (replay scrollback) và `peer.back` (relay báo client khi agent quay lại).
+- **Relay**: cấp token bền cho browser khi đăng nhập; xác thực lại bằng token đã lưu (trượt hạn 12h); **không xóa session khi rớt** (chỉ prune khi hết hạn). Agent reconnect → re‑pair + gửi `peer.back`.
+- **Store**: thêm `touchSession` (gia hạn khi reconnect).
+- **Agent**: `TermManager` giữ **scrollback ring buffer** 256KB mỗi pty; xử lý `term.attach` (resize theo viewport mới + replay buffer). Terminal vẫn sống qua `peer.gone` (đã có từ trước).
+- **Web**: lưu token vào `localStorage`; khi load có token → kết nối im lặng bỏ qua màn login; `onClosed` → auto‑reconnect backoff (0.5s→15s); reattach terminal qua `term.list` + `term.attach` (reset + ghi lại scrollback) thay vì mở tab mới; badge trạng thái `live` / `reconnecting` (vàng, nhấp nháy) / `exited`.
+- **Kiểm thử**: typecheck sạch; `npm test` **49/49** (thêm 3 test: session sống sót, token lạ bị từ chối, reconnect chờ agent rồi pair); web build sạch (không chunk >500kB).
+
+⏳ Chưa test trên relay+agent thật/điện thoại thật — mới ở mức đơn vị + build.
+
+---
+
 ## 📌 Việc tiếp theo (theo spec)
 
 1. Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.
@@ -69,3 +84,5 @@
 ---
 
 *Cập nhật lúc 2026-09-09 sau khi hoàn thiện file explorer + editor (code‑split) + git panel và smoke test 13/13.*
+
+*Cập nhật lúc 2026-09-09 (chiều): redesign terminal (window chrome kiểu macOS) + session sống sót/auto‑reconnect/đăng nhập bền — test 49/49, build sạch. Chưa commit, chờ review.*

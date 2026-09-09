@@ -78,17 +78,44 @@ export class Relay extends EventEmitter {
       void this.store.touchDevice(device.deviceId);
       peer.send(encode({ type: 'hello.res', ok: true }));
       this.emit('agent-connected', device.deviceId);
-      // Re-pair any clients waiting for this device.
+      // Re-pair any clients waiting for this device and tell them the agent is
+      // back, so they can reattach their surviving terminals.
       for (const c of this.clients.values()) {
-        if (c.deviceId === device.deviceId && !c.paired) this.tryPair(c);
+        if (c.deviceId === device.deviceId && !c.paired) {
+          this.tryPair(c);
+          if (c.paired) c.peer.send(encode({ type: 'peer.back' } satisfies AnyFrame));
+        }
       }
       return;
     }
 
     if (frame.type === 'hello.client') {
       if (frame.protocol !== PROTOCOL_VERSION) return this.reject(peer, 'protocol mismatch');
-      const entry = this.accessKeys.get(accessKeyHash(frame.accessKey));
       const now = Date.now();
+
+      // Silent reconnect: authenticate with a durable session token. The token
+      // outlives the socket, so the browser can drop and re-pair without a new
+      // ACCESS_KEY. We slide its expiry forward and re-pair with the agent.
+      if (frame.session) {
+        const rec = this.store.sessionByTokenHash(sessionTokenHash(frame.session));
+        if (!rec || Date.parse(rec.expiresAt) < now) {
+          return this.reject(peer, 'session expired');
+        }
+        const expiresAt = new Date(now + this.cfg.sessionTtlMs).toISOString();
+        void this.store.touchSession(rec.tokenId, expiresAt);
+        const conn: ClientConn = {
+          peer, deviceId: rec.deviceId, tokenId: rec.tokenId, lastFrameAt: now, paired: false,
+        };
+        this.clients.set(peer.id, conn);
+        // Echo the token so the browser can keep persisting the same one.
+        peer.send(encode({ type: 'hello.res', ok: true, session: frame.session }));
+        this.emit('client-authed', rec.deviceId);
+        this.tryPair(conn); // pairs now if agent is up, else waits for reconnect
+        return;
+      }
+
+      if (!frame.accessKey) return this.reject(peer, 'expected access key or session');
+      const entry = this.accessKeys.get(accessKeyHash(frame.accessKey));
       if (!entry || entry.used || entry.expiresAt < now) {
         this.accessKeys.delete(accessKeyHash(frame.accessKey));
         return this.reject(peer, 'invalid or expired access key');
@@ -114,7 +141,8 @@ export class Relay extends EventEmitter {
         peer, deviceId: entry.deviceId, tokenId, lastFrameAt: now, paired: false,
       };
       this.clients.set(peer.id, conn);
-      peer.send(encode({ type: 'hello.res', ok: true }));
+      // Hand the browser its durable token for persistent login + reconnect.
+      peer.send(encode({ type: 'hello.res', ok: true, session: token }));
       this.emit('client-authed', entry.deviceId);
       this.tryPair(conn);
       return;
@@ -165,7 +193,8 @@ export class Relay extends EventEmitter {
     const client = this.clients.get(peer.id);
     if (client) {
       this.clients.delete(peer.id);
-      if (client.tokenId) void this.store.removeSession(client.tokenId);
+      // Keep the session record: the browser may reconnect silently with its
+      // durable token. Expired sessions are swept by tick()/pruneSessions.
       const dev = this.devices.get(client.deviceId);
       if (dev) dev.peer.send(encode({ type: 'peer.gone' } satisfies AnyFrame));
       this.emit('client-closed', client.deviceId);

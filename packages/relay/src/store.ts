@@ -96,6 +96,14 @@ export class Store {
     return this.flush();
   }
 
+  /** Slide a session's expiry forward (called when a browser reconnects with it). */
+  touchSession(tokenId: string, expiresAt: string): Promise<void> {
+    const s = this.data.sessions.find(x => x.tokenId === tokenId);
+    if (!s) return Promise.resolve();
+    s.expiresAt = expiresAt;
+    return this.flush();
+  }
+
   /** Drop sessions past expiresAt. */
   async pruneSessions(now = Date.now()): Promise<number> {
     const before = this.data.sessions.length;

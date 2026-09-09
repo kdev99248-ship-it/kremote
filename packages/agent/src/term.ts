@@ -18,14 +18,30 @@ export const DEFAULT_ARGS = process.platform === 'win32'
   ? ['-NoLogo']
   : [];
 
+// Per-terminal scrollback kept so a browser that reconnects can replay recent
+// output instead of facing a blank screen. Capped by bytes (a rough proxy for
+// characters) with a hard slice on overflow — cheap and good enough.
+const SCROLLBACK_LIMIT = 256 * 1024;
+
+interface TermEntry { proc: pty.IPty; info: TermInfo; buffer: string }
+
 export class TermManager extends EventEmitter {
-  private terms = new Map<string, { proc: pty.IPty; info: TermInfo }>();
+  private terms = new Map<string, TermEntry>();
   private seq = 0;
 
   get size(): number { return this.terms.size; }
 
   list(): TermInfo[] {
     return [...this.terms.values()].map(t => t.info);
+  }
+
+  /** Recent output for `termId`, for replay on reconnect. '' if unknown. */
+  scrollback(termId: string): string {
+    return this.terms.get(termId)?.buffer ?? '';
+  }
+
+  get(termId: string): TermInfo | undefined {
+    return this.terms.get(termId)?.info;
   }
 
   open(opts: { shell?: string; args?: string[]; cols?: number; rows?: number; cwd?: string } = {}): TermInfo {
@@ -42,9 +58,16 @@ export class TermManager extends EventEmitter {
       env: process.env as Record<string, string>,
     });
 
-    this.terms.set(termId, { proc, info: { termId, shell, cwd } });
+    const entry: TermEntry = { proc, info: { termId, shell, cwd }, buffer: '' };
+    this.terms.set(termId, entry);
 
-    proc.onData(data => this.emit('data', termId, data));
+    proc.onData(data => {
+      entry.buffer += data;
+      if (entry.buffer.length > SCROLLBACK_LIMIT) {
+        entry.buffer = entry.buffer.slice(entry.buffer.length - SCROLLBACK_LIMIT);
+      }
+      this.emit('data', termId, data);
+    });
     proc.onExit(({ exitCode, signal }) => {
       this.terms.delete(termId);
       this.emit('exit', termId, signal == null ? exitCode : null);

@@ -120,6 +120,24 @@ export class AgentClient {
         return;
       }
 
+      case 'term.attach': {
+        const f = frame as any;
+        const info = this.terms.get(f.termId);
+        if (!info) {
+          this.send({ type: 'term.attach.res', id: f.id, ok: false, error: 'no such terminal' } as AnyFrame);
+          return;
+        }
+        // Resize the pty to the reconnecting browser's viewport, then replay.
+        if (typeof f.cols === 'number' && typeof f.rows === 'number') {
+          this.terms.resize(f.termId, f.cols, f.rows);
+        }
+        this.send({
+          type: 'term.attach.res', id: f.id, ok: true, termId: f.termId,
+          data: this.terms.scrollback(f.termId), cwd: info.cwd, shell: info.shell,
+        } as AnyFrame);
+        return;
+      }
+
       case 'term.input': {
         const f = frame as any;
         this.terms.input(f.termId, f.data);
@@ -260,7 +278,7 @@ export class AgentClient {
   private handleTermOpen(f: any): void {
     try {
       const info = this.terms.open({ shell: f.shell ?? DEFAULT_SHELL, cols: f.cols, rows: f.rows, cwd: f.cwd });
-      this.send({ type: 'term.open.res', id: f.id, termId: info.termId, ok: true } as AnyFrame);
+      this.send({ type: 'term.open.res', id: f.id, termId: info.termId, ok: true, cwd: info.cwd, shell: info.shell } as AnyFrame);
     } catch (e: any) {
       this.send({ type: 'term.open.res', id: f.id, ok: false, error: e?.message ?? 'spawn failed' } as AnyFrame);
     }

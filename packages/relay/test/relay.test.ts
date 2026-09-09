@@ -61,6 +61,18 @@ function connectClient(relay: Relay, accessKey: string, id = 'client1'): FakePee
   return peer;
 }
 
+function reconnectClient(relay: Relay, session: string, id = 'client-r'): FakePeer {
+  const peer = new FakePeer(id);
+  relay.handleHello(peer, encode({ type: 'hello.client', session, protocol: PROTOCOL_VERSION }));
+  return peer;
+}
+
+function sessionOf(peer: FakePeer): string {
+  const hello = peer.last() as { session?: string };
+  assert.equal(typeof hello.session, 'string', 'expected a session token in hello.res');
+  return hello.session!;
+}
+
 test('agent hello with unknown key is rejected', async () => {
   const { dir, relay } = await setup();
   try {
@@ -87,7 +99,10 @@ test('full pairing: connect, mint key, match, pump both ways', async () => {
 
     const key = await mintAccessKey(relay, agent);
     const client = connectClient(relay, key);
-    assert.deepEqual(client.last(), { type: 'hello.res', ok: true });
+    const hello = client.last() as { type: string; ok: boolean; session?: string };
+    assert.equal(hello.type, 'hello.res');
+    assert.equal(hello.ok, true);
+    assert.equal(typeof hello.session, 'string', 'relay hands the browser a durable session token');
     assert.ok(relay.isPairedClient(client.id));
 
     // client → agent
@@ -170,6 +185,61 @@ test('max 4 concurrent browser sessions per device', async () => {
     const key5 = await mintAccessKey(relay, agent);
     const c5 = connectClient(relay, key5, 'c5');
     assert.deepEqual(c5.last(), { type: 'hello.res', ok: false, error: 'too many sessions for this device' });
+  } finally { await cleanup(dir); }
+});
+
+test('durable session survives disconnect and re-authenticates silently', async () => {
+  const { dir, relay, deviceKey } = await setup();
+  try {
+    const agent = connectAgent(relay, deviceKey);
+    const key = await mintAccessKey(relay, agent);
+    const client = connectClient(relay, key);
+    const token = sessionOf(client);
+
+    // Browser drops (tab closed / network blip). Session must NOT be discarded.
+    relay.handleClose(client);
+    assert.equal(relay.stats.clients, 0);
+
+    // Reconnect with the stored token — no new ACCESS_KEY needed.
+    const back = reconnectClient(relay, token);
+    const hello = back.last() as { ok: boolean; session?: string };
+    assert.equal(hello.ok, true);
+    assert.equal(hello.session, token, 'relay echoes the same durable token');
+    assert.ok(relay.isPairedClient(back.id), 'reconnected client re-pairs with the live agent');
+  } finally { await cleanup(dir); }
+});
+
+test('reconnect with an unknown session token is rejected', async () => {
+  const { dir, relay, deviceKey } = await setup();
+  try {
+    connectAgent(relay, deviceKey);
+    const back = reconnectClient(relay, 'not-a-real-token');
+    assert.deepEqual(back.last(), { type: 'hello.res', ok: false, error: 'session expired' });
+    assert.ok(back.closed);
+  } finally { await cleanup(dir); }
+});
+
+test('session reconnect waits for a not-yet-connected agent, then pairs', async () => {
+  const { dir, relay, deviceKey } = await setup();
+  try {
+    const agent1 = connectAgent(relay, deviceKey, 'a1');
+    const key = await mintAccessKey(relay, agent1);
+    const client = connectClient(relay, key);
+    const token = sessionOf(client);
+    relay.handleClose(client);
+    relay.handleClose(agent1); // agent offline too
+
+    // Reconnect while the agent is down: accepted but unpaired (waiting).
+    const back = reconnectClient(relay, token);
+    assert.equal((back.last() as any).ok, true);
+    assert.equal(relay.isPairedClient(back.id), false);
+
+    // Agent returns → client is re-paired automatically.
+    const agent2 = connectAgent(relay, deviceKey, 'a2');
+    assert.ok(relay.isPairedClient(back.id));
+    const out: AnyFrame = { type: 'term.data', termId: 't1', data: 'resumed' };
+    relay.handleFrame(agent2, encode(out));
+    assert.deepEqual(back.last(), out);
   } finally { await cleanup(dir); }
 });
 
