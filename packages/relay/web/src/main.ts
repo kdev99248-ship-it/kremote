@@ -632,3 +632,12 @@ if (sessionToken) {
 } else if (urlKey) {
   loginForm.requestSubmit();
 }
+
+// PWA: register the service worker in production builds only (dev mode would
+// cache the un-built shell and fight Vite's HMR). No-op when unsupported.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {
+    // SW is a progressive enhancement - a failed registration must never
+    // block the app itself.
+  });
+}
