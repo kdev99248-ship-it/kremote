@@ -146,6 +146,27 @@ Mục tiêu: đưa các handler `fs.*` đã có lên web UI trong Files view.
 
 ---
 
+## 🤝 Zero-touch enrollment (agent tự đăng ký, kiểu 9Remote) — mới
+
+Mục tiêu: bỏ bước copy DEVICE_KEY tay. Agent trỏ relayUrl vào relay là tự chạy.
+
+- **Protocol**: `hello.agent` thêm `register?: boolean` + `label?`, `deviceKey` thành optional.
+  `hello.res` thêm `deviceKey?`/`deviceId?` (chỉ trả về đúng socket đăng ký, đúng 1 lần).
+- **Relay** (`relay.ts`): hello.agent không có deviceKey + `register:true` → mint DEVICE_KEY
+  (`Store.addDeviceNow` — sync mutation, flush nền) rồi **chỉ trả key sau khi store ghi bền**
+  (`await flush()` — relay crash ngay sau enrollment thì key vẫn còn, cửa không mở lại).
+  Cửa đăng ký chốt bởi `maxDevices` (mặc định **1**, env `KREMOTE_MAX_DEVICES`): agent đầu tiên
+  chiếm slot, sau đó `device registration closed`. Restart relay → store nạp lại → cửa vẫn đóng.
+  Refuse reason này chỉ log, không tính vào brute-force block.
+- **Agent** (`client.ts`): không có deviceKey → gửi `register:true`; nhận `hello.res{deviceKey}`
+  → lưu vào config (`saveConfig`), reconnect như thiết bị thường → tự xin ACCESS_KEY như cũ.
+  `config.ts`: `deviceKey` thành optional (config mới chỉ cần `relayUrl` + `root`).
+- **Kiểm thử**: `npm test` **63/63** (+3: enroll+pair, cửa đóng khi đủ cap, restart vẫn đóng cửa).
+  End-to-end thật: config không key → tự enroll ~1s, config có key; agent thứ 2 bị chặn đúng
+  `device registration closed`.
+
+---
+
 ## 📌 Việc tiếp theo (theo spec)
 
 1. ~~Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.~~ ✅ XONG (mục 🖱 ở trên).
