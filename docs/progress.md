@@ -274,3 +274,41 @@ Mục tiêu: trên mobile, mở kremote như app riêng (icon, fullscreen, khôn
 - **Kiểm thử**: local browser thật — SW `activated`, scope `/`, manifest parse OK,
   cache chứa shell; CDP offline mode → fetch `/` vẫn 200 từ cache (fallback hoạt động).
   Trên VPS: manifest/sw/icons trả 200 + MIME đúng qua HTTPS.
+
+---
+
+## ⚙️ 4 tính năng terminal — Settings · Bio-lock · Log tail · History — mới
+
+Bốn tính năng bổ trợ cho terminal (2 web-only, 1 full-stack, 1 web-only):
+
+- **#2 Settings terminal** (`web/src/settings.ts`): font size (10–24, clamp) + theme
+  sáng/tối cho xterm, persist `localStorage['kremote.term.settings']`. Popover ⚙ trên
+  header; áp dụng live cho mọi tab đang mở.
+- **#3 Bio-lock** (`web/src/biolock.ts`): WebAuthn platform authenticator (Windows
+  Hello / Face ID / vân tay) làm cổng mở lại session. Bật trong Settings → tạo credential
+  gắn với origin, lưu credId cạnh session token. Khi khởi động, nếu có token + credId thì
+  giữ token lại tới khi `navigator.credentials.get()` xác minh; huỷ/lỗi → xoá token, về
+  màn login. Đây là lớp tiện lợi chống nhìn trộm, không phải biên bảo mật cứng (token vẫn
+  là thứ auth với relay).
+- **#4 Log tail** (`agent/src/tail.ts` + `tailview.ts` + protocol `tail.*`): `tail -f`
+  live qua `TailManager` (fs.watch + đọc offset mới, phát hiện rotation khi size co lại →
+  đọc từ 0, cap 8 watch, pathguard trong root). Panel Logs: nhập path → Follow (replay
+  phần cuối file rồi stream tiếp), ô pattern + chuông 🔔 để notify khi dòng mới khớp regex.
+- **#6 Command history** (`web/src/history.ts`): mỗi dòng lệnh submit được ghi lại (dedupe,
+  mới nhất trước, cap 500) vào `localStorage['kremote.history']`. Drawer ⌘: search + tap để
+  gửi lại lệnh vào terminal đang active.
+
+**2 bug phát hiện & vá khi verify:**
+- History bỏ sót lệnh: input tới theo chunk rời (mỗi phím 1 chunk, Enter là chunk `\r`
+  riêng) nên parse từng chunk là sai. Vá: `sendInput()` gom `pendingLine` per-tab (Map),
+  ghi khi gặp `\r`, cap 4096 bytes.
+- Tail replay bị drop: agent gửi `tail.data` replay TRƯỚC `tail.watch.res` → client chưa
+  biết watchId → bỏ chunk. Vá: tách `initialReplay(watchId)` khỏi `watch()`; agent gọi
+  replay SAU khi gửi ack.
+
+- **Kiểm thử**: 76/76 test, typecheck + web:build sạch. E2E browser thật (Playwright,
+  relay+agent zero-touch): #2 font/theme persist; #6 ghi + tap-to-send chạy lại lệnh; #4
+  replay 2 dòng seed ngay khi Follow, stream ERROR live, notify đúng khi khớp `ERROR` và
+  KHÔNG notify với dòng INFO; #3 bio-lock qua CDP virtual authenticator (origin `localhost`
+  vì `127.0.0.1` không phải RP ID hợp lệ) — verified thật → mở khoá + reconnect; unverified
+  → chặn, xoá token, về login.

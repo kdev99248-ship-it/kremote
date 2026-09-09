@@ -4,6 +4,7 @@ import type { AnyFrame, ClientToAgent } from '@kremote/shared';
 import { TermManager, DEFAULT_SHELL } from './term.ts';
 import { FsError, FsHandlers } from './fs.ts';
 import { GitRunner } from './git.ts';
+import { TailManager, TailError } from './tail.ts';
 import { saveConfig } from './config.ts';
 import type { AgentConfig } from './config.ts';
 
@@ -18,6 +19,7 @@ export class AgentClient {
   private terms = new TermManager();
   private readonly fs: FsHandlers;
   private readonly git: GitRunner;
+  private readonly tails: TailManager;
   private pendingAccessKey = new Map<string, (r: { key: string; url: string; expiresMs: number }) => void>();
   private accessKeySeq = 0;
   private readonly cfg: AgentConfig;
@@ -32,6 +34,11 @@ export class AgentClient {
     this.git = new GitRunner(this.fs, cfg.gitCredentials);
     this.terms.on('data', (termId, data) => this.send({ type: 'term.data', termId, data } as AnyFrame));
     this.terms.on('exit', (termId, code) => this.send({ type: 'term.exit', termId, code } as AnyFrame));
+    this.tails = new TailManager(
+      cfg.root ?? process.cwd(),
+      (watchId, chunk) => this.send({ type: 'tail.data', watchId, chunk } as AnyFrame),
+      (watchId, reason) => this.send({ type: 'tail.data', watchId, chunk: `\n[tail ended: ${reason}]\n` } as AnyFrame),
+    );
   }
 
   connect(): void {
@@ -73,6 +80,7 @@ export class AgentClient {
   stop(): void {
     this.closed = true;
     this.terms.closeAll();
+    this.tails.closeAll();
     try { this.ws?.close(1000, 'shutdown'); } catch {}
     this.ws = null;
   }
@@ -189,6 +197,27 @@ export class AgentClient {
       case 'term.resize': {
         const f = frame as any;
         this.terms.resize(f.termId, f.cols, f.rows);
+        return;
+      }
+
+      // ── Tail (live log follow) ─────────────────────────────────────────
+      case 'tail.watch': {
+        const f = frame as any;
+        try {
+          const h = await this.tails.watch(f.path, { fromEnd: f.fromEnd, lastBytes: f.lastBytes });
+          this.send({ type: 'tail.watch.res', id: f.id, ok: true, watchId: h.watchId } as AnyFrame);
+          // Replay only after the ack so the client already knows its watchId.
+          await this.tails.initialReplay(h.watchId);
+        } catch (e) {
+          const error = e instanceof TailError || e instanceof Error ? e.message : String(e);
+          this.send({ type: 'tail.watch.res', id: f.id, ok: false, error } as AnyFrame);
+        }
+        return;
+      }
+
+      case 'tail.unwatch': {
+        const f = frame as any;
+        this.tails.unwatch(f.watchId);
         return;
       }
 

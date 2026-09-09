@@ -142,18 +142,39 @@ export interface GitLogRes {
 }
 export interface GitLogErr { type: 'git.log.res'; id: string; ok: false; error: string }
 
+// ── Tail (live file follow) ──────────────────────────────────────────────
+// The agent watches a file and streams appended bytes to the browser, like
+// `tail -f`. `fromEnd` starts at EOF (only new lines arrive); otherwise the
+// last chunk of the file is replayed first.
+
+export interface TailWatchReq {
+  type: 'tail.watch'; id: string; path: string; fromEnd?: boolean; lastBytes?: number
+}
+export interface TailWatchRes {
+  type: 'tail.watch.res'; id: string; ok: true; watchId: string
+}
+export interface TailWatchErr { type: 'tail.watch.res'; id: string; ok: false; error: string }
+
+// Fire-and-forget appended data (agent→client).
+export interface TailData { type: 'tail.data'; watchId: string; chunk: string }
+
+export interface TailUnwatchReq { type: 'tail.unwatch'; watchId: string }
+
 // ── Limits (guardrails, not features) ────────────────────────────────────
 export const MAX_WRITE_BYTES = 100 * 1024;         // 100 KB per fs.write
 export const MAX_READ_BYTES = 10 * 1024 * 1024;    // 10 MB per fs.read
 export const MAX_GIT_LOG = 200;
 export const MAX_GIT_DIFF_BYTES = 2 * 1024 * 1024;
+export const MAX_TAIL_WATCHES = 8;                 // concurrent tail.watch per agent
+export const TAIL_LAST_BYTES = 64 * 1024;          // initial replay cap when not fromEnd
 
 // ── App frames ───────────────────────────────────────────────────────────
 export type ClientToAgent =
   | TermOpenReq | TermCloseReq | TermListReq | TermAttachReq
   | TermInput | TermResize
   | FsListReq | FsReadReq | FsWriteReq | FsMkdirReq | FsRenameReq | FsDeleteReq
-  | GitStatusReq | GitDiffReq | GitCommitReq | GitPushReq | GitLogReq;
+  | GitStatusReq | GitDiffReq | GitCommitReq | GitPushReq | GitLogReq
+  | TailWatchReq | TailUnwatchReq;
 
 export type AgentToClient =
   | TermOpenRes | TermOpenErr | TermCloseRes | TermListRes | TermAttachRes | TermAttachErr
@@ -161,7 +182,8 @@ export type AgentToClient =
   | FsListRes | FsListErr | FsReadRes | FsReadErr | FsWriteRes | FsWriteErr
   | FsMkdirRes | FsRenameRes | FsDeleteRes
   | GitStatusRes | GitStatusErr | GitDiffRes | GitDiffErr
-  | GitCommitRes | GitPushRes | GitLogRes | GitLogErr;
+  | GitCommitRes | GitPushRes | GitLogRes | GitLogErr
+  | TailWatchRes | TailWatchErr | TailData;
 
 export type AnyFrame =
   | ClientToAgent | AgentToClient

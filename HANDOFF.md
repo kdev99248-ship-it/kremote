@@ -1,161 +1,65 @@
-# Handoff: kremote — 9Remote-style web UI clone + mobile responsive
+# HANDOFF — kremote: 4 tính năng (2 settings, 3 bio-lock, 4 log tail, 6 history)
 
-**Generated**: 2026-09-09
-**Branch**: `feat/terminal-mvp`
-**Status**: Ready for Review (MVP verified on emulator; not yet tested on a real phone / real VPS)
+Cập nhật: phiên `20260909_124717_400ec0`, branch `feat/terminal-mvp` @ `C:\works\kremote`
 
-## Goal
+## Mục tiêu (user: "lam 2,3,4,6")
+- **#2 Settings terminal** — font size + theme sáng/tối, persist localStorage. Web-only.
+- **#3 Bio-lock** — WebAuthn platform authenticator (Face ID/vân tay/Windows Hello) gate session token. Web-only.
+- **#4 Log tail** — `tail -f` live qua protocol `tail.*`, kèm pattern-match notification. Cần protocol + agent + web.
+- **#6 Command history** — ghi dòng lệnh đã submit, panel search + tap-to-send. Web-only.
 
-kremote = personal remote-access tool (terminal + file explorer + git, driven from a browser),
-modeled on **9Remote** (docs.9remote.cc). Single-owner, no SaaS relay. This session's active
-question: is the web UI a faithful clone of 9Remote's look **and** excellently mobile-responsive?
-Verdict reached: **yes at MVP level** — verified via Playwright at 390px, no real-device test yet.
+## TRẠNG THÁI: code xong, đang verify E2E. CHƯA commit/push/deploy.
 
-## Completed
+### Đã verify PASS (browser thật, relay :8799, agent zero-touch)
+- #2 settings: popover mở, font 14→15 persist, theme persist (`localStorage['kremote.term.settings']` = `{"fontSize":15,"theme":"dark"}`). ✅
+- #6 history: sau khi FIX bug buffer (xem dưới), ghi `echo hist-fix-check` vào `localStorage['kremote.history']`; drawer render item, tap → gõ lại lệnh + chạy được. ✅
+- #4 tail: theo `demo.log`, append từ ngoài → stream live WARN/ERROR/INFO đúng. Sau FIX replay (xem dưới) đang test lại.
 
-- [x] Terminal end-to-end (relay pairing → agent node-pty → xterm.js), multi-tab, mobile key row.
-- [x] Filesystem: agent `fs.*` handlers (list/read/write/mkdir/rename/delete) behind path guard.
-- [x] Git: agent `git.*` handlers (status/diff/commit/push/log) with cwd inside resolved repo.
-- [x] Web file explorer (`FileTree`) + CodeMirror editor (`Editor`) + git panel (`GitPanel`).
-- [x] **Code-split**: `editor.ts` is a lazy chunk; per-language packs lazy too. Main bundle 315 kB
-      (xterm only), editor 411 kB on demand — no chunk >500 kB, 984 kB single-chunk warning gone.
-- [x] Tests 46/46 (`npm test`): protocol, relay pairing lifecycle, pathguard, fs/git/config handlers.
-- [x] Playwright smoke 13/13 (real relay 8789 ↔ agent ↔ repo): login, terminal, tree, lazy editor
-      chunk, save bar, json language chunk, git branch/sync/changed-files/diff, view switching.
-- [x] Mobile assessment at 390px (iPhone 12): 5 screenshots (login/terminal/files-tree/editor/git),
-      **no horizontal overflow** (scrollW == clientW == 390), 9Remote dark theme + coral accent,
-      editor slides over tree with back chevron, mobile key row on terminal view only.
-- [x] Committed as `c678d4a`; `docs/progress.md` updated.
+### Đang dở
+- Vừa restart agent+relay fresh (KEY: `4W89ZSCY`, port 8799) với `demo.log` có sẵn 2 dòng để test:
+  1. **replay** (mở tail → 2 dòng cũ phải hiện ngay) — kiểm tra fix `initialReplay`
+  2. **pattern notify** (#4): set pattern `ERROR`, append dòng ERROR → phải bắn notification
+- #3 bio-lock: **CHƯA verify E2E** (WebAuthn khó test headless — cần virtual authenticator qua CDP `WebAuthn.enable` + `addVirtualAuthenticator`, hoặc verify logic/persist thôi).
 
-## Not Yet Done
+## Tests: 76/76 pass, typecheck sạch, web:build sạch.
 
-- [ ] `git push` credential handling (SSH/PAT) — currently runs raw `git push`.
-- [ ] Deploy to VPS + test from a **real phone** (only emulator-verified so far).
+## 2 BUG đã phát hiện & FIX trong lúc verify (quan trọng — đừng lặp lại)
+1. **History bỏ sót dòng lệnh**: thiết kế đầu parse từng chunk `data.includes('\r')` — SAI vì input đến theo chunk rời (desktop: mỗi phím 1 chunk; Enter là chunk `\r` riêng). Fix: `sendInput()` accumulate `pendingLine` per-tab (Map), record khi gặp `\r`, cap 4096 bytes. File `main.ts`.
+2. **Tail replay bị drop**: agent gửi `tail.data` replay TRƯỚC `tail.watch.res` → client chưa biết watchId → bỏ chunk. Fix: tách `initialReplay(watchId)` khỏi `watch()`; `client.ts` gọi replay SAU khi gửi ack. File `tail.ts` + `client.ts` + `tail.test.ts`.
 
-> File ops UI (mkdir/rename/delete) — **DONE** since this handoff was written (see
-> `docs/progress.md` mục 🖱). Smoke-tested in a real browser; also fixed two bugs found
-> during that smoke: (1) notice banner was wiped instantly by the re-render, (2) 28px
-> horizontal overflow on mobile caused by the hidden `#editor` slide-over's
-> `translateX(28px)` — fixed with `#files { overflow: hidden }` in the mobile breakpoint.
-> Note: the earlier "no horizontal overflow at 390px" claim was measured on the Term view
-> only; re-measure per view after UI changes.
+## Files đã tạo/sửa (chưa commit)
+MỚI:
+- `packages/agent/src/tail.ts` (120 dòng) — `TailManager`: fs.watch + đọc offset mới, phát hiện rotation (shrink→từ 0), cap 8 watch, pathguard trong root
+- `packages/agent/test/tail.test.ts` (4 test: replay, fromEnd, rotation, pathguard+cap)
+- `packages/relay/web/src/settings.ts` (68) — `readSettings/saveSettings`, font+theme
+- `packages/relay/web/src/history.ts` (37) — `addHistory/searchHistory`, dedupe, cap, localStorage `kremote.history`
+- `packages/relay/web/src/biolock.ts` (93) — WebAuthn: `register/verify`, gate token, persist credId
+- `packages/relay/web/src/tailview.ts` (167) — panel Logs: start/stop follow, render dòng, pattern notify
 
-## Failed Approaches (Don't Repeat These)
+SỬA:
+- `packages/shared/src/protocol.ts` — thêm `tail.watch`/`tail.watch.res`/`tail.data`/`tail.dead`/`tail.unwatch` + union `ClientToAgent`/`AgentToClient`
+- `packages/agent/src/client.ts` — import TailManager, field `tails`, case `tail.watch`/`tail.unwatch`, replay-after-ack, `closeAll` trong stop()
+- `packages/relay/web/src/conn.ts` — `onFrame()` giờ trả unsubscribe
+- `packages/relay/web/src/main.ts` — import 4 module; VIEWS thêm `'tail'`; createTab dùng termSettings; `sendInput` buffer history; settings popover; history drawer; biolock startup gate; applySettingsToTabs
+- `packages/relay/web/index.html` — nút `#settings-btn`/`#history-btn`, view-btn `Logs`, `#settings-pop`/`#history-drawer`/`#tail` markup
+- `packages/relay/web/src/style.css` — style settings/history/tail
 
-- **Port 8788 / 8787**: frequently occupied (old relay pid 13348 from this repo — deliberately NOT
-  killed since not started by us; also Python uv). → Use `KREMOTE_RELAY_PORT=8789`.
-- **Agent config JSON with backslash root** (`"C:\works\kremote"`) → `Bad escaped character in JSON
-  at position 107`. → Use forward slashes: `"root": "C:/works/kremote"`.
-- **Node resolving `/tmp`** on Windows → `C:\tmp` ENOENT. → Use full Windows temp path
-  `C:/Users/kdev9/AppData/Local/Temp/...`.
-- **Playwright `getByRole('button', {name:'Term'})`** matched both view-btn "Term" and the new-tab
-  button (aria-label "New terminal") → strict-mode violation. → `{ name: 'Term', exact: true }`.
-- **ACCESS_KEY reuse**: one-time, 5-min expiry. → Restart agent to mint a fresh key before each
-  Playwright run.
+## Verify E2E setup (tái lập)
+- tmp: `%LOCALAPPDATA%\Temp\kremote-feat-test` (relay-home, agent/config.json, root/demo.log)
+- agent config: `{relayUrl:"ws://127.0.0.1:8799/ws", root:<tmp>/root, label:"feat-test"}`
+- relay: `KREMOTE_RELAY_PORT=8799 KREMOTE_RELAY_HOME=<tmp>/relay-home node packages/relay/src/index.ts`
+- agent: `KREMOTE_AGENT_CONFIG=<tmp>/agent/config.json node packages/agent/src/index.ts`
+- URL: `http://127.0.0.1:8799/?key=<KEY từ agent.log>`
+- Browser test: dùng CDP `Input.insertText` + `Input.dispatchKeyEvent` (synthetic KeyboardEvent bị xterm bỏ); chỉ ASCII trong comment Python (em-dash làm hỏng stdin)
 
-## Key Decisions
+## CÒN LẠI
+1. Verify replay + pattern-notify (#4) trên KEY `4W89ZSCY`
+2. Verify hoặc chấp nhận #3 bio-lock (cân nhắc CDP virtual authenticator)
+3. Kill node processes dọn dẹp (`taskkill /F /IM node.exe`)
+4. `npm run typecheck && npm test && npm run web:build` lần cuối
+5. COMMIT + push + `bash deploy/deploy.sh` (VPS root@163.61.73.198 / kremote.cc) + docs `docs/progress.md`
 
-| Decision | Rationale |
-|----------|-----------|
-| `editor.ts` split from `files.ts` as lazy chunk | CodeMirror ~800 kB dominated bundle; only load on first file click |
-| `guessLanguage` async w/ dynamic import per lang | Each language pack becomes its own chunk (26–85 kB) |
-| Do not kill pre-existing relay (pid 13348) | Not started by us; only clean up our own smoke processes |
-| Verdict "MVP done" not "fully done" | Only emulator-verified; real-phone/VPS test outstanding |
-
-## Current State
-
-**Working**: terminal, files (tree + lazy CodeMirror), git panel — all end-to-end over real
-relay↔agent↔repo. UI matches 9Remote (dark `#040404`, coral `#e46c4c`, green live dot, rounded
-segmented tabs). Mobile clean at 390px.
-
-**Broken**: nothing known.
-
-**Uncommitted Changes**: `files.ts` + `style.css` (file ops UI + 2 fixes) ready to commit;
-untracked `.claude/`, `.tmp-relay-home/` (DEVICE_KEY store — never commit), `.tmp-sandbox/`,
-`HANDOFF.md`.
-
-## Files to Know
-
-| File | Why It Matters |
-|------|----------------|
-| `packages/shared/src/protocol.ts` | JSON frame protocol (`term.*`, `fs.*`, `git.*`, `hello.*`, `accesskey.*`, `peer.gone`) + limits |
-| `packages/agent/src/fs.ts` | `FsHandlers` — all paths via `resolveInRootSafe` (lexical + realpath guard) |
-| `packages/agent/src/git.ts` | `GitRunner` — status/diff/commit/push/log inside resolved repo |
-| `packages/agent/src/client.ts` | `AgentClient` dispatches `fs.*` / `git.*` / `term.*` frames |
-| `packages/relay/web/src/files.ts` | `FileTree` + `loadEditor()` lazy loader |
-| `packages/relay/web/src/editor.ts` | `Editor` (CodeMirror, lazy chunk) — async `guessLanguage` |
-| `packages/relay/web/src/git.ts` | `GitPanel` — branch/status/diff/commit/push UI |
-| `packages/relay/web/src/main.ts` | View switching, tabs, lazy `openFile`, mobile keys |
-| `packages/relay/web/src/style.css` | Breakpoints: max-width 700/400px, pointer:coarse, hover:none |
-| `docs/progress.md` | Current progress log (Vietnamese) |
-| `docs/superpowers/specs/2026-09-08-kremote-design.md` | Design spec ("Modeled on 9Remote") |
-
-## Code Context
-
-**Lazy editor loader** (`files.ts`):
-```typescript
-export async function loadEditor(container: HTMLElement, opts?: EditorOpts): Promise<Editor> {
-  editorModule ??= import('./editor');       // CodeMirror chunk fetched once
-  const { Editor } = await editorModule;
-  return new Editor(container, opts);
-}
-```
-
-**Lazy openFile** (`main.ts`): first click fetches the editor chunk, later clicks reuse it:
-```typescript
-let editorReady: Promise<Editor> | null = null;
-async function openFile(path: string): Promise<void> {
-  editorReady ??= loadEditor($('editor'), { onSave: () => fileTree?.refresh() });
-  const ed = await editorReady;
-  await ed.openFile(path);
-}
-```
-
-**Per-language dynamic import** (`editor.ts`):
-```typescript
-private async guessLanguage(path: string): Promise<LanguageSupport[]> {
-  const ext = path.split('.').pop()?.toLowerCase() || '';
-  switch (ext) {
-    case 'js': case 'ts': case 'jsx': case 'tsx': {
-      const { javascript } = await import('@codemirror/lang-javascript');
-      return [javascript()];
-    }
-    // json, html, css, md, py, sh/bash (shell via StreamLanguage) …
-  }
-}
-```
-
-## Resume Instructions
-
-Run relay + agent locally (Windows, PowerShell or bash):
-
-1. Mint device key: `KREMOTE_RELAY_HOME=<dir> node packages/relay/src/keygen.ts my-win`
-2. Start relay: `KREMOTE_RELAY_PORT=8789 KREMOTE_RELAY_HOME=<dir> node packages/relay/src/index.ts`
-3. Put printed DEVICE_KEY into agent config JSON (`root` must use **forward slashes**):
-   `{ "relayUrl": "ws://127.0.0.1:8789", "deviceKey": "…", "root": "C:/works/kremote" }`
-4. Start agent: `KREMOTE_AGENT_CONFIG=<cfg.json> node packages/agent/src/index.ts`
-   - Agent prints an ACCESS_KEY (one-time, 5-min expiry) and a `?key=…` URL.
-5. Open the URL in a browser (or `http://127.0.0.1:8789/?key=<KEY>`).
-   - Expected: login auto-submits, green conn dot, a terminal tab boots into PowerShell.
-   - If login fails: the key likely expired — restart the agent for a fresh key.
-6. Build web after edits: `npm run -w packages/relay/web build` (outputs to `packages/relay/public`).
-7. Tests: `npm test` — expect **46/46**.
-
-To re-run the mobile check: mint fresh key, then
-`KREMOTE_KEY=<KEY> PW_ARTIFACT_DIR=<dir> node <skill>/run.js <mobile.js>` (390px, isMobile/hasTouch).
-Expect `body overflow-x: {"overflowX": false}`.
-
-## Warnings
-
-- **ACCESS_KEY is one-time + 5-min** — always restart the agent before a fresh browser/Playwright run.
-- **Agent config `relayUrl` needs the `/ws` path** (`ws://127.0.0.1:8789/ws`) — bare origin gives
-  `Unexpected server response: 400` with a 30s reconnect loop.
-- **`deviceKey` printed by keygen is one-time readable** — if lost, re-run keygen (old key's hash stays but is useless).
-- **Config `root` needs forward slashes** on Windows, else JSON escape error.
-- **Don't kill relay pid 13348** (or any relay not started this session) — only clean up your own
-  smoke processes (this session used relay pid on port 8789 + its agent).
-- `.playwright-mcp`, `.tmp-agent-root`, `.tmp-tscheck`, `.serena`, `packages/relay/public` are
-  gitignored — verify before committing. Also never commit `.tmp-relay-home/` (holds DEVICE_KEY).
-- User communicates in **Vietnamese**; `docs/progress.md` is in Vietnamese.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+## Bối cảnh dự án (không đổi)
+- TLS nhúng Node :443, build-on-VPS git-based, zero-touch cap 1 device, PWA viết tay
+- Deploy: `bash deploy/deploy.sh` (đọc `deploy/deploy.env`) hoặc `VPS=root@163.61.73.198 bash deploy/deploy.sh`
+- Commit gần nhất trước phiên này: `7d4988d` (notification)

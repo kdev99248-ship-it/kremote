@@ -79,11 +79,17 @@ export function rpc<T = any>(frame: Record<string, unknown>, timeoutMs = 20000):
   });
 }
 
-/** Register a handler for push-style frames (term.data, term.exit, peer.gone…). */
-export function onFrame(type: string, h: (f: any) => void): void {
+/** Register a handler for push-style frames (term.data, term.exit, peer.gone…).
+ *  Returns an unsubscribe function. */
+export function onFrame(type: string, h: (f: any) => void): () => void {
   let list = handlers.get(type);
   if (!list) { list = []; handlers.set(type, list); }
   list.push(h);
+  return () => {
+    const l = handlers.get(type);
+    const i = l?.indexOf(h) ?? -1;
+    if (i >= 0) l!.splice(i, 1);
+  };
 }
 
 function dispatch(f: any): void {

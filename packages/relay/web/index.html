@@ -44,9 +44,12 @@
         <button class="view-btn active" data-view="terminals">Term</button>
         <button class="view-btn" data-view="files">Files</button>
         <button class="view-btn" data-view="git">Git</button>
+        <button class="view-btn" data-view="tail">Logs</button>
       </nav>
       <div id="tabs" role="tablist"></div>
       <button id="new-tab" title="New terminal" aria-label="New terminal">+</button>
+      <button id="history-btn" title="Command history" aria-label="Command history">⌘</button>
+      <button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
       <button id="notify-bell" title="Notify when a long command finishes" aria-label="Toggle command-finished notifications" hidden>🔔</button>
       <span id="conn-state" title="Connection state" aria-hidden="true"></span>
     </header>
@@ -64,6 +67,46 @@
     <main id="git" class="view" hidden>
       <div id="git-panel"></div>
     </main>
+
+    <!-- Log tail view -->
+    <main id="tail" class="view" hidden>
+      <div id="tail-panel"></div>
+    </main>
+
+    <!-- Command history drawer (overlay, any view) -->
+    <div id="history-drawer" hidden>
+      <div class="drawer-head">
+        <span>Command history</span>
+        <button id="history-clear" title="Clear history">Clear</button>
+        <button id="history-close" title="Close">✕</button>
+      </div>
+      <input id="history-search" type="search" placeholder="Search commands…" autocomplete="off" />
+      <div id="history-list" role="listbox"></div>
+    </div>
+
+    <!-- Settings popover -->
+    <div id="settings-pop" hidden>
+      <div class="settings-row">
+        <label for="set-font">Terminal font size</label>
+        <div class="stepper">
+          <button id="font-minus" aria-label="Smaller">−</button>
+          <span id="set-font">14</span>
+          <button id="font-plus" aria-label="Bigger">+</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Terminal theme</label>
+        <div class="seg">
+          <button id="theme-dark" class="active">Dark</button>
+          <button id="theme-light">Light</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Biometric lock</label>
+        <button id="biolock-toggle" class="switch">Off</button>
+      </div>
+      <p class="settings-hint" id="biolock-hint"></p>
+    </div>
 
     <footer id="mobile-keys" aria-label="Terminal keys">
       <button data-key="Control">Ctrl</button>

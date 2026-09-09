@@ -15,6 +15,12 @@ import {
   enableNotifications, disableNotifications, readPref, shouldNotify,
   showFinishedNotification, notificationsSupported,
 } from './notify';
+import { readSettings, writeSettings, TERM_THEMES, type TermSettings } from './settings';
+import { addHistory, searchHistory, clearHistory } from './history';
+import {
+  biolockSupported, biolockEnabled, enableBiolock, disableBiolock, unlockSession,
+} from './biolock';
+import { TailView } from './tailview';
 
 // One WS to the relay; multiple terminal tabs multiplexed over it by termId.
 // Views: Terminals | Files | Git — switched by the header buttons.
@@ -75,12 +81,13 @@ function storeSession(token: string | null): void {
 }
 
 // ── View switching ─────────────────────────────────────────────────────
-const VIEWS = ['terminals', 'files', 'git'] as const;
+const VIEWS = ['terminals', 'files', 'git', 'tail'] as const;
 type ViewName = (typeof VIEWS)[number];
 let currentView: ViewName = 'terminals';
 
 let fileTree: FileTree | null = null;
 let gitPanel: GitPanel | null = null;
+let tailView: TailView | null = null;
 
 function switchView(name: ViewName): void {
   currentView = name;
@@ -100,6 +107,7 @@ function switchView(name: ViewName): void {
   if (mk) mk.style.display = name === 'terminals' ? '' : 'none';
   if (name === 'files' && fileTree) fileTree.refresh();
   if (name === 'git' && gitPanel) gitPanel.refresh();
+  if (name === 'tail' && !tailView) tailView = new TailView($('tail-panel'));
 }
 
 for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
@@ -307,33 +315,10 @@ function programFromTitle(raw: string, tab: Tab): string {
 function createTab(initialLabel: string): Tab {
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, Consolas, "Cascadia Mono", monospace',
-    fontSize: 14,
+    fontSize: termSettings.fontSize,
     cursorBlink: true,
     scrollback: 5000,
-    theme: {
-      background: '#040404',
-      foreground: '#e5e5e5',
-      cursor: '#e46c4c',
-      cursorAccent: '#0c0c0c',
-      selectionBackground: 'rgba(228, 108, 76, .28)',
-      selectionInactiveBackground: 'rgba(228, 108, 76, .14)',
-      black: '#242424',
-      red: '#ff5f57',
-      green: '#22c55e',
-      yellow: '#febc2e',
-      blue: '#60a5fa',
-      magenta: '#c084fc',
-      cyan: '#22d3ee',
-      white: '#e5e5e5',
-      brightBlack: '#737373',
-      brightRed: '#ff8178',
-      brightGreen: '#4ade80',
-      brightYellow: '#fde047',
-      brightBlue: '#93c5fd',
-      brightMagenta: '#d8b4fe',
-      brightCyan: '#67e8f9',
-      brightWhite: '#fafafa',
-    },
+    theme: { ...TERM_THEMES[termSettings.theme] },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -410,11 +395,30 @@ function createTab(initialLabel: string): Tab {
   return tab;
 }
 
-// Single choke point for everything typed into a terminal: forward to the pty
-// and let the command watcher know a line (anything ending in CR) went out.
+// Single choke point for everything typed into a terminal: forward to the pty,
+// let the command watcher know a line went out, and record it in history.
+// Input arrives as arbitrary chunks (per-keypress on desktop, whole lines from
+// the composer/CDP paste path), so we accumulate a pending line per tab and
+// record it when its CR arrives.
+const pendingLine = new Map<Tab, string>();
+
 function sendInput(tab: Tab, data: string): void {
   send({ type: 'term.input', termId: tab.termId, data });
-  if (data.includes('\r')) tab.watch.onSubmit();
+  if (!data) return;
+  const buf = (pendingLine.get(tab) ?? '') + data;
+  const crIdx = buf.indexOf('\r');
+  if (crIdx === -1) {
+    pendingLine.set(tab, buf.slice(-4096)); // guard against unbounded growth
+    return;
+  }
+  tab.watch.onSubmit();
+  recordHistoryLine(buf.slice(0, crIdx));
+  pendingLine.delete(tab);
+}
+
+function recordHistoryLine(raw: string): void {
+  const line = raw.replace(/[\x00-\x1f\x7f]/g, '').trim();
+  if (line) addHistory(line);
 }
 
 // A watched command just finished (output ran ≥ RUN_MIN then went quiet).
@@ -681,10 +685,141 @@ function releaseModifiers(): void {
   for (const b of mobileKeys.querySelectorAll('button.stuck')) b.classList.remove('stuck');
 }
 
-// Startup: a stored session token reconnects silently (persistent login); a
-// fresh ?key= in the URL logs in; otherwise the login screen waits.
+// ── Terminal settings (#2) ──────────────────────────────────────────────
+let termSettings: TermSettings = readSettings();
+applySettingsToTabs();
+
+function applySettingsToTabs(): void {
+  for (const t of tabs) {
+    t.term.options.fontSize = termSettings.fontSize;
+    (t.term.options as any).theme = { ...TERM_THEMES[termSettings.theme] };
+    fitSoon(t);
+  }
+}
+
+const settingsBtn = $('settings-btn');
+const settingsPop = $('settings-pop');
+const fontLabel = $('set-font');
+const biolockToggle = $('biolock-toggle');
+const biolockHint = $('biolock-hint');
+
+function paintSettings(): void {
+  fontLabel.textContent = String(termSettings.fontSize);
+  $('theme-dark').classList.toggle('active', termSettings.theme === 'dark');
+  $('theme-light').classList.toggle('active', termSettings.theme === 'light');
+  const on = biolockEnabled();
+  biolockToggle.textContent = on ? 'On' : 'Off';
+  biolockToggle.classList.toggle('on', on);
+  biolockHint.textContent = biolockSupported()
+    ? (on ? 'Session unlock requires Face/fingerprint on this device.'
+          : 'Require Face/fingerprint before reopening the session.')
+    : 'Not supported in this browser.';
+}
+
+settingsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  settingsPop.hidden = !settingsPop.hidden;
+  paintSettings();
+});
+document.addEventListener('click', (e) => {
+  if (!settingsPop.hidden && !settingsPop.contains(e.target as Node) && e.target !== settingsBtn) {
+    settingsPop.hidden = true;
+  }
+});
+$('font-minus').addEventListener('click', () => bumpFont(-1));
+$('font-plus').addEventListener('click', () => bumpFont(1));
+function bumpFont(d: number): void {
+  termSettings = { ...termSettings, fontSize: Math.min(24, Math.max(10, termSettings.fontSize + d)) };
+  writeSettings(termSettings);
+  applySettingsToTabs();
+  paintSettings();
+}
+$('theme-dark').addEventListener('click', () => setTheme('dark'));
+$('theme-light').addEventListener('click', () => setTheme('light'));
+function setTheme(theme: 'dark' | 'light'): void {
+  termSettings = { ...termSettings, theme };
+  writeSettings(termSettings);
+  applySettingsToTabs();
+  paintSettings();
+}
+biolockToggle.addEventListener('click', () => {
+  if (biolockEnabled()) {
+    disableBiolock();
+    paintSettings();
+    return;
+  }
+  void enableBiolock().then((ok) => {
+    paintSettings();
+    if (!ok) biolockHint.textContent = 'Could not create a credential — cancelled or unsupported.';
+  });
+});
+
+// ── Command history drawer (#6) ─────────────────────────────────────────
+const historyBtn = $('history-btn');
+const historyDrawer = $('history-drawer');
+const historySearch = $('history-search') as HTMLInputElement;
+const historyList = $('history-list');
+
+function renderHistory(): void {
+  historyList.innerHTML = '';
+  const items = searchHistory(historySearch.value).slice(0, 100);
+  if (items.length === 0) {
+    const el = document.createElement('div');
+    el.className = 'history-empty';
+    el.textContent = 'No commands yet';
+    historyList.appendChild(el);
+    return;
+  }
+  for (const line of items) {
+    const el = document.createElement('button');
+    el.className = 'history-item';
+    el.textContent = line;
+    el.title = 'Tap to send to the active terminal';
+    el.addEventListener('click', () => {
+      if (active && !active.dead && active.termId) {
+        switchView('terminals');
+        sendInput(active, line + '\r');
+      }
+      historyDrawer.hidden = true;
+    });
+    historyList.appendChild(el);
+  }
+}
+
+historyBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  historyDrawer.hidden = !historyDrawer.hidden;
+  if (!historyDrawer.hidden) {
+    historySearch.value = '';
+    renderHistory();
+    historySearch.focus();
+  }
+});
+historyDrawer.addEventListener('click', (e) => {
+  if (e.target === historyDrawer) historyDrawer.hidden = true;
+});
+historySearch.addEventListener('input', renderHistory);
+$('history-clear').addEventListener('click', () => {
+  clearHistory();
+  renderHistory();
+});
+$('history-close').addEventListener('click', () => { historyDrawer.hidden = true; });
+
+// ── Startup: biometric gate, then the usual session/ACCESS_KEY login flow.
+// The stored session token is withheld until the platform authenticator
+// verifies the user (opt-in via settings). Cancel → fall back to login.
 if (sessionToken) {
-  startConnect({ session: sessionToken });
+  if (biolockEnabled()) {
+    void unlockSession().then((unlocked) => {
+      if (unlocked) startConnect({ session: sessionToken! });
+      else {
+        storeSession(null);          // user declined — don't keep the token around
+        showLogin('');               // plain ACCESS_KEY login
+      }
+    });
+  } else {
+    startConnect({ session: sessionToken });
+  }
 } else if (urlKey) {
   loginForm.requestSubmit();
 }
