@@ -77,7 +77,18 @@
       <button data-seq="/">/</button>
       <button data-seq="~">~</button>
       <button data-seq="-">-</button>
+      <button id="composer-toggle" aria-label="Toggle text composer">ABC</button>
     </footer>
+    <!-- Mobile text composer: a real <input> so Gboard/Telex/IME composition
+         works (xterm's hidden textarea breaks Vietnamese on mobile). Enter
+         sends the whole line; it sits above the mobile-keys row. -->
+    <div id="composer" hidden>
+      <input id="composer-input" type="text" autocomplete="off" autocorrect="off"
+             autocapitalize="off" spellcheck="false" enterkeyhint="send"
+             placeholder="Type a line… (Vietnamese OK)" />
+      <button id="composer-send" aria-label="Send line">↵</button>
+      <button id="composer-close" aria-label="Close composer">✕</button>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

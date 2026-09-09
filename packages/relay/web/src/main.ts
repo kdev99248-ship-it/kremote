@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import {
   connect, isConnected, send, rpc, onFrame, type Credential,
 } from './conn';
+import { looksLikeClear } from './clear';
 import { FileTree, loadEditor } from './files';
 import type { Editor } from './editor';
 import { GitPanel } from './git';
@@ -205,7 +206,10 @@ onFrame('peer.back', () => {
 // ── Terminal tabs ──────────────────────────────────────────────────────
 onFrame('term.data', (f) => {
   const tab = byTermId(f.termId);
-  if (tab) tab.term.write(f.data);
+  if (!tab) return;
+  // Windows cls/clear never erases the scrollback (see clear.ts) — append a
+  // real ESC[3J when a clear shape passes so the screen is genuinely empty.
+  tab.term.write(f.data + (looksLikeClear(f.data) ? '\x1b[3J' : ''));
 });
 
 onFrame('term.exit', (f) => {
@@ -530,13 +534,57 @@ loginForm.addEventListener('submit', (e) => {
   setTimeout(() => loginForm.querySelector('button')!.removeAttribute('disabled'), 1500);
 });
 
+// ── Mobile text composer (Vietnamese/IME-friendly input) ────────────────
+// xterm's hidden textarea mangles mobile IME composition (Gboard Telex, VNI):
+// each keystroke commits garbage because composition events never complete
+// against a synthetic field. A real <input> composes natively; we forward the
+// finished line on Enter. Toggle via the ABC key; auto-opens on phones.
+const composer = document.getElementById('composer')!;
+const composerInput = document.getElementById('composer-input') as HTMLInputElement;
+const composerSend = document.getElementById('composer-send')!;
+const composerClose = document.getElementById('composer-close')!;
+const composerToggle = document.getElementById('composer-toggle')!;
+
+let composing = false;
+
+function composerSendLine(): void {
+  const line = composerInput.value;
+  composerInput.value = '';
+  if (!active || active.dead || !active.termId) return;
+  if (line) send({ type: 'term.input', termId: active.termId, data: line + '\r' });
+}
+
+composerInput.addEventListener('compositionstart', () => { composing = true; });
+composerInput.addEventListener('compositionend', () => { composing = false; });
+composerInput.addEventListener('keydown', (e) => {
+  if (composing || e.isComposing) return; // don't send mid-composition
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    composerSendLine();
+  }
+});
+composerSend.addEventListener('click', composerSendLine);
+composerClose.addEventListener('click', () => { composer.hidden = true; });
+composerToggle.addEventListener('click', () => {
+  composer.hidden = !composer.hidden;
+  if (!composer.hidden) composerInput.focus();
+});
+
+// Mobile (coarse pointer): show the toggle and open the composer by default so
+// Vietnamese input works out of the box.
+if (window.matchMedia('(pointer: coarse)').matches) {
+  composerToggle.hidden = false;
+  composer.hidden = false;
+}
+
 // ── Mobile modifier keys ───────────────────────────────────────────────
 const heldModifiers = new Set<string>();
 const mobileKeys = document.getElementById('mobile-keys')!;
 
 mobileKeys.addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button');
-  if (!btn || !active || active.dead) return;
+  if (!btn || btn.id === 'composer-toggle') return; // composer handles itself
+  if (!active || active.dead) return;
 
   const seq = btn.getAttribute('data-seq');
   const mod = btn.getAttribute('data-key');

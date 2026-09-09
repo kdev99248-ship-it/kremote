@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import * as pty from 'node-pty';
 
 // Owns the node-pty processes for this agent. Emits `data` / `exit` per
@@ -10,13 +12,34 @@ export interface TermInfo {
   cwd: string;
 }
 
-export const DEFAULT_SHELL = process.platform === 'win32'
-  ? (process.env.KREMOTE_SHELL ?? 'powershell.exe')
-  : (process.env.SHELL ?? '/bin/bash');
+/**
+ * Shell to spawn. On Windows we prefer PowerShell 7+ (pwsh.exe — UTF-8 native)
+ * and fall back to Windows PowerShell 5.1 wrapped in a `chcp 65001` cmd so
+ * Vietnamese/Unicode text survives the legacy OEM codepage. KREMOTE_SHELL
+ * overrides everything (spawned verbatim, no wrapper).
+ */
+export function resolveShell(): { shell: string; args: string[]; label: string } {
+  if (process.platform !== 'win32') {
+    return { shell: process.env.SHELL ?? '/bin/bash', args: [], label: process.env.SHELL ?? '/bin/bash' };
+  }
+  const override = process.env.KREMOTE_SHELL;
+  if (override) return { shell: override, args: [], label: override };
 
-export const DEFAULT_ARGS = process.platform === 'win32'
-  ? ['-NoLogo']
-  : [];
+  const pwsh = join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe');
+  if (existsSync(pwsh)) return { shell: pwsh, args: ['-NoLogo'], label: pwsh };
+
+  // cmd wrapper: chcp 65001 switches the ConPTY console to UTF-8 for the whole
+  // chain, so PSReadLine round-trips Vietnamese through pty.write() intact.
+  return {
+    shell: 'cmd.exe',
+    args: ['/d', '/c', 'chcp 65001 >nul && powershell.exe -NoLogo'],
+    label: 'powershell.exe',
+  };
+}
+
+// Kept for backwards compatibility (config/tests may import it).
+export const DEFAULT_SHELL = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL ?? '/bin/bash');
+export const DEFAULT_ARGS = process.platform === 'win32' ? ['-NoLogo'] : [];
 
 // Per-terminal scrollback kept so a browser that reconnects can replay recent
 // output instead of facing a blank screen. Capped by bytes (a rough proxy for
@@ -45,8 +68,19 @@ export class TermManager extends EventEmitter {
   }
 
   open(opts: { shell?: string; args?: string[]; cols?: number; rows?: number; cwd?: string } = {}): TermInfo {
-    const shell = opts.shell ?? DEFAULT_SHELL;
-    const args = opts.args ?? DEFAULT_ARGS;
+    let shell: string;
+    let args: string[];
+    let label: string;
+    if (opts.shell) {
+      shell = opts.shell;
+      args = opts.args ?? DEFAULT_ARGS;
+      label = opts.shell;
+    } else {
+      const resolved = resolveShell();
+      shell = resolved.shell;
+      args = opts.args ?? resolved.args;
+      label = resolved.label;
+    }
     const cwd = opts.cwd ?? process.env.USERPROFILE ?? process.cwd();
     const termId = `t${++this.seq}_${Date.now().toString(36)}`;
 
@@ -58,7 +92,7 @@ export class TermManager extends EventEmitter {
       env: process.env as Record<string, string>,
     });
 
-    const entry: TermEntry = { proc, info: { termId, shell, cwd }, buffer: '' };
+    const entry: TermEntry = { proc, info: { termId, shell: label, cwd }, buffer: '' };
     this.terms.set(termId, entry);
 
     proc.onData(data => {
@@ -73,7 +107,7 @@ export class TermManager extends EventEmitter {
       this.emit('exit', termId, signal == null ? exitCode : null);
     });
 
-    return { termId, shell, cwd };
+    return { termId, shell: label, cwd };
   }
 
   input(termId: string, data: string): boolean {

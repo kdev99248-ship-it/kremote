@@ -604,6 +604,37 @@ button, input, textarea { font-family: var(--font-ui); }
   .tab .x, .git-file, .file-tree-row, .view-btn { -webkit-tap-highlight-color: transparent; }
 }
 
+/* ── Mobile text composer (Vietnamese/IME input) ────────────────────── */
+#composer {
+  display: flex; gap: 6px; flex: none; align-items: center;
+  padding: 7px 9px; background: var(--panel); border-top: 1px solid var(--border);
+}
+#composer[hidden] { display: none; }
+#composer input {
+  flex: 1; min-width: 0; min-height: 40px; padding: 8px 12px;
+  background: var(--panel-2); color: var(--fg);
+  border: 1px solid var(--hairline); border-radius: var(--r-ctl);
+  font: 14px/1.2 var(--font-mono);
+}
+#composer input:focus { outline: none; border-color: var(--accent); }
+#composer button {
+  background: var(--panel-2); color: var(--fg-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-ctl);
+  min-width: 44px; min-height: 40px; padding: 8px 12px;
+  font: 15px/1 var(--font-ui); cursor: pointer; flex: none;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+#composer button:active { background: var(--active); color: var(--fg); }
+#composer-send { color: var(--accent) !important; border-color: var(--accent) !important; }
+/* Desktop: the whole composer is pointless (real keyboard) — hide everything. */
+#composer-toggle { display: none; }
+@media (pointer: coarse) {
+  #composer-toggle { display: block; min-height: 40px; }
+}
+@media (pointer: fine) {
+  #composer { display: none; }
+}
+
 /* Hover states read as stuck on touch — neutralise them where there is no hover. */
 @media (hover: none) {
   .tab:hover { background: transparent; color: var(--faint); }
