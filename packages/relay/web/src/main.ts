@@ -400,7 +400,7 @@ function createTab(initialLabel: string): Tab {
 
 async function newTab(): Promise<void> {
   if (!isConnected()) return;
-  const tab = createTab(`term ${tabs.length + 1}`);
+  const tab = createTab(`Session ${tabs.length + 1}`);
   try {
     const res = await rpc<{ ok: boolean; termId?: string; error?: string; cwd?: string; shell?: string }>(
       { type: 'term.open', cols: tab.term.cols, rows: tab.term.rows });
@@ -466,7 +466,10 @@ async function syncTerms(): Promise<void> {
   for (const info of live) {
     await attachToTerm(info, byTermId(info.termId));
   }
-  if (tabs.length === 0 && live.length === 0) void newTab();
+  // Nothing usable to land on — a fresh session, or every terminal died with a
+  // restarted agent (their exited tabs stay for scrollback). Open a live one so
+  // the user isn't stranded on a dead prompt having to click "+".
+  if (!tabs.some(t => !t.dead)) void newTab();
 }
 
 function activate(tab: Tab): void {

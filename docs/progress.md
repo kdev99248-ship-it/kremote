@@ -69,8 +69,11 @@ Mục tiêu: rớt mạng / ngủ laptop / mở lại tab → tự kết nối l
 - **Agent**: `TermManager` giữ **scrollback ring buffer** 256KB mỗi pty; xử lý `term.attach` (resize theo viewport mới + replay buffer). Terminal vẫn sống qua `peer.gone` (đã có từ trước).
 - **Web**: lưu token vào `localStorage`; khi load có token → kết nối im lặng bỏ qua màn login; `onClosed` → auto‑reconnect backoff (0.5s→15s); reattach terminal qua `term.list` + `term.attach` (reset + ghi lại scrollback) thay vì mở tab mới; badge trạng thái `live` / `reconnecting` (vàng, nhấp nháy) / `exited`.
 - **Kiểm thử**: typecheck sạch; `npm test` **49/49** (thêm 3 test: session sống sót, token lạ bị từ chối, reconnect chờ agent rồi pair); web build sạch (không chunk >500kB).
-
-⏳ Chưa test trên relay+agent thật/điện thoại thật — mới ở mức đơn vị + build.
+- **Smoke test end‑to‑end** (Playwright, relay 8795 ↔ agent thật):
+  - Đăng nhập `?key=` → app, terminal live; token bền lưu vào `localStorage`.
+  - **Reload URL trần (không `?key=`) → vào thẳng, bỏ qua login** (đăng nhập bền); terminal cũ gắn lại kèm **replay scrollback** (marker sống sót); gõ lệnh sau reattach OK.
+  - Kill agent → `peer.gone` → badge **reconnecting** (vàng), conn `off`.
+  - Restart agent → `peer.back` → resync: terminal cũ đánh dấu **exited** (pty chết theo tiến trình agent, giữ lại scrollback) + **tự mở terminal mới live** (fix: mở terminal mới khi không còn tab sống, không chỉ khi 0 tab).
 
 ---
 
@@ -85,4 +88,6 @@ Mục tiêu: rớt mạng / ngủ laptop / mở lại tab → tự kết nối l
 
 *Cập nhật lúc 2026-09-09 sau khi hoàn thiện file explorer + editor (code‑split) + git panel và smoke test 13/13.*
 
-*Cập nhật lúc 2026-09-09 (chiều): redesign terminal (window chrome kiểu macOS) + session sống sót/auto‑reconnect/đăng nhập bền — test 49/49, build sạch. Chưa commit, chờ review.*
+*Cập nhật lúc 2026-09-09 (chiều): redesign terminal (window chrome kiểu macOS) + session sống sót/auto‑reconnect/đăng nhập bền — test 49/49, build sạch. Đã commit 9a3f756.*
+
+*Cập nhật lúc 2026-09-09 (tối): smoke test end‑to‑end thật (Playwright, relay+agent) — xác nhận đăng nhập bền + reattach + replay scrollback + peer.gone/peer.back. Vá khoảng trống: tự mở terminal mới khi mọi tab đã chết sau khi agent restart.*
