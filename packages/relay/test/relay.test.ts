@@ -266,3 +266,19 @@ test('tick expires idle peers and stale access keys', async () => {
     assert.equal(relay.stats.accessKeys, 0);
   } finally { await cleanup(dir); }
 });
+
+test("reject() emits 'rejected' with peer id + reason (audit hook)", async () => {
+  const { dir, relay } = await setup();
+  try {
+    const events: { peerId: string; reason: string }[] = [];
+    relay.on('rejected', (peerId: string, reason: string) => events.push({ peerId, reason }));
+
+    // Credential guess: the exact reason index.ts classifies as brute-force.
+    const bad = connectClient(relay, 'nope-not-a-real-key', 'attacker');
+    assert.deepEqual(bad.last(), { type: 'hello.res', ok: false, error: 'invalid or expired access key' });
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].peerId, 'attacker');
+    assert.equal(events[0].reason, 'invalid or expired access key');
+  } finally { await cleanup(dir); }
+});

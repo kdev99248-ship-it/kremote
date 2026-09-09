@@ -262,6 +262,10 @@ export class Relay extends EventEmitter {
   }
 
   private reject(peer: Peer, error: string): void {
+    // Single choke point for every hello failure. Emit before closing so the
+    // transport layer can audit-log it and classify credential guesses toward
+    // brute-force blocking (index.ts). Relay itself stays IP-agnostic.
+    this.emit('rejected', peer.id, error);
     peer.send(encode({ type: 'hello.res', ok: false, error }));
     peer.close(4003, error);
   }

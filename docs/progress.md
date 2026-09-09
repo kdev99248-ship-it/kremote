@@ -77,11 +77,49 @@ Mục tiêu: rớt mạng / ngủ laptop / mở lại tab → tự kết nối l
 
 ---
 
+## 🔒 Siết bảo mật relay (chuẩn bị lên VPS) — mới
+
+Mục tiêu: relay đủ an toàn để mở ra internet công khai.
+
+- **`guard.ts` (mới)** — `ConnectionGuard` thuần, transport‑agnostic, đồng hồ tiêm được (như `relay.tick(now)`):
+  - Giới hạn kết nối đồng thời **theo IP** (mặc định 20) và **tổng** (200).
+  - **Chống brute‑force ACCESS_KEY**: cửa sổ trượt đếm auth‑fail theo IP → vượt ngưỡng (mặc định 10/60s) thì **chặn tạm IP** (mặc định 5 phút).
+  - Chuẩn hoá IP: bóc IPv4‑mapped (`::ffff:1.2.3.4`→`1.2.3.4`), gộp IPv6 theo **/64** (chặn /128 vô dụng), bỏ zone id.
+  - `sweep(now)` dọn cửa sổ hết hạn + gỡ block hết hạn (gọi trong `tick`).
+- **`relay.ts`** — `reject()` phát event `'rejected'(peerId, reason)` (giữ Relay không biết IP); lớp transport phân loại.
+- **`index.ts`** — wiring toàn bộ ở lớp socket:
+  - **TLS nhúng trong Node**: có `KREMOTE_TLS_CERT`+`KREMOTE_TLS_KEY` → `https.createServer` (`wss://`); **hot‑reload** cert qua `setSecureContext` khi Let's Encrypt gia hạn (fs.watch + debounce, không cần restart). Không cert → `http` (dev local). **IP lấy trực tiếp từ socket** (không reverse‑proxy).
+  - **`maxPayload`** cho WS (mặc định 8 MB, > `MAX_GIT_DIFF_BYTES` 2 MB) thay cho mặc định 100 MiB của `ws`.
+  - **Hello deadline**: socket không gửi hello hợp lệ trong 10s bị đóng (4008) — bịt lỗ un‑authed socket không bao giờ bị sweep.
+  - **Phân loại auth‑fail**: chỉ lý do đoán‑credential (`invalid or expired access key`, `session expired`) tính vào brute‑force; `agent offline`/`protocol mismatch`/… chỉ log (tránh khoá nhầm người thật).
+  - **Audit log có cấu trúc** 1 dòng/sự kiện: `refuse`, `auth-fail` (kèm `blocked`), `block`, `hello-timeout`, `tls-reload`, `agent-online/offline`, `paired`. `/healthz` trả thêm `guard.stats`.
+- **Kiểm thử**: `npm test` **58/58** (thêm 9: 8 test guard đồng hồ giả + 1 test event `rejected`); typecheck sạch.
+- **Smoke runtime** (relay 8795, limit nhỏ qua env):
+  - Brute‑force: 3 key sai → `4003`, lần 4+ IP bị chặn → `1013` (log `block`).
+  - Per‑IP cap: giữ 3 socket, socket 4 bị đóng `1013` (`refuse reason=per-ip`).
+  - Hello‑timeout: socket im lặng bị đóng `4008` (`hello-timeout`).
+  - TLS: self‑signed cert → `wss://` bắt tay + duplex frame OK; ghi đè cert → log `tls-reload`, `wss` vẫn chạy với cert mới không restart.
+
+### Env vars deploy (mới)
+
+| Env | Mặc định | Ý nghĩa |
+|-----|----------|---------|
+| `KREMOTE_TLS_CERT` / `KREMOTE_TLS_KEY` | — | Đường dẫn cert/key PEM; có cả hai → bật `wss://` + hot‑reload |
+| `KREMOTE_MAX_CONNS_PER_IP` | 20 | Kết nối đồng thời tối đa/IP |
+| `KREMOTE_MAX_CONNS` | 200 | Kết nối đồng thời tối đa toàn relay |
+| `KREMOTE_AUTH_FAIL_MAX` | 10 | Số auth‑fail/cửa sổ trước khi chặn IP |
+| `KREMOTE_AUTH_FAIL_WINDOW_MS` | 60000 | Độ dài cửa sổ trượt auth‑fail |
+| `KREMOTE_BLOCK_MS` | 300000 | Thời gian chặn tạm IP |
+| `KREMOTE_HELLO_TIMEOUT_MS` | 10000 | Hạn gửi hello cho socket chưa auth |
+| `KREMOTE_MAX_PAYLOAD` | 8388608 | Giới hạn kích thước 1 frame WS (byte) |
+
+---
+
 ## 📌 Việc tiếp theo (theo spec)
 
 1. Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.
 2. Xử lý push cần credential (SSH/PAT) — hiện chỉ chạy `git push` thô.
-3. Cân nhắc auth mạnh hơn cho relay khi deploy VPS (rate‑limit, TLS).
+3. ~~Cân nhắc auth mạnh hơn cho relay khi deploy VPS (rate‑limit, TLS).~~ ✅ XONG (mục 🔒 ở trên).
 4. Deploy thử lên VPS + test từ điện thoại thật.
 
 ---
@@ -91,3 +129,5 @@ Mục tiêu: rớt mạng / ngủ laptop / mở lại tab → tự kết nối l
 *Cập nhật lúc 2026-09-09 (chiều): redesign terminal (window chrome kiểu macOS) + session sống sót/auto‑reconnect/đăng nhập bền — test 49/49, build sạch. Đã commit 9a3f756.*
 
 *Cập nhật lúc 2026-09-09 (tối): smoke test end‑to‑end thật (Playwright, relay+agent) — xác nhận đăng nhập bền + reattach + replay scrollback + peer.gone/peer.back. Vá khoảng trống: tự mở terminal mới khi mọi tab đã chết sau khi agent restart.*
+
+*Cập nhật lúc 2026-09-09 (khuya): siết bảo mật relay — `ConnectionGuard` (cap kết nối/IP + tổng, chống brute‑force ACCESS_KEY, chuẩn hoá IPv6 /64), TLS nhúng trong Node + hot‑reload cert, hello‑deadline, maxPayload, audit log có cấu trúc. Test 58/58, smoke rate‑limit + TLS đạt.*
