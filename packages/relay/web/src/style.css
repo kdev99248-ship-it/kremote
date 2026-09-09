@@ -338,12 +338,69 @@ button, input, textarea { font-family: var(--font-ui); }
 .file-tree li { color: var(--fg-2); }
 .file-tree li:hover { background: var(--panel-2); }
 
+.file-tree-head {
+  display: flex; align-items: center; gap: 6px;
+  flex: none; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.file-tree-head .file-tree-path { border-bottom: 0; flex: 1; min-width: 0; }
 .file-tree-path {
   padding: 9px 12px; font: 12px var(--font-mono);
-  color: var(--muted); border-bottom: 1px solid var(--border);
-  flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background: var(--panel);
+  color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.file-tree-new {
+  flex: none; margin-right: 8px;
+  background: var(--accent-dim); color: var(--accent);
+  border: 1px solid var(--accent-line); border-radius: var(--r-sm);
+  padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.file-tree-new:hover { background: var(--accent-line); color: var(--accent-hi); }
+.file-tree-newform {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 10px; flex: none;
+  border-bottom: 1px solid var(--border); background: var(--panel-2);
+}
+.file-tree-newform.error::after {
+  content: attr(data-msg); color: var(--danger);
+  font-size: 11px; flex: none;
+}
+.file-tree-newform .file-tree-input { flex: 1; min-width: 0; }
+.file-tree-input {
+  background: var(--bg-deep); color: var(--fg);
+  border: 1px solid var(--accent-line); border-radius: var(--r-sm);
+  padding: 5px 8px; font: 12.5px var(--font-mono); outline: none;
+}
+.file-tree-input:focus { border-color: var(--accent); }
+.file-tree-icon { flex: none; }
+.file-tree-name {
+  flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.file-tree-actions {
+  display: flex; align-items: center; gap: 3px; flex: none;
+  opacity: 0; transition: opacity .12s;
+}
+.file-tree-row:hover .file-tree-actions,
+.file-tree-actions.confirming { opacity: 1; }
+.file-tree-act {
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  width: 24px; height: 24px; padding: 0; line-height: 1;
+  font-size: 12px; cursor: pointer; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.file-tree-act:hover { background: var(--hover); color: var(--fg); }
+.file-tree-act-del:hover { color: var(--danger); }
+.file-tree-confirm { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.file-tree-notice {
+  flex: none; padding: 7px 12px; font-size: 12px;
+  color: var(--ok); background: rgba(34, 197, 94, .10);
+  border-bottom: 1px solid var(--border);
+}
+.file-tree-notice.error { color: var(--danger); background: rgba(255, 95, 87, .10); }
+#file-tree.is-busy ul { opacity: .55; pointer-events: none; }
 .file-tree-up {
   padding: 7px 12px !important; cursor: pointer;
   font-size: 13px; color: var(--muted) !important;
@@ -597,7 +654,7 @@ button, input, textarea { font-family: var(--font-ui); }
   .term-screen { padding: 5px 6px; }
 
   /* Files: tree and editor become full-screen layers; editor slides over tree. */
-  #files { position: relative; }
+  #files { position: relative; overflow: hidden; }
   #file-tree, #editor { position: absolute; inset: 0; width: auto; border-right: 0; }
   #editor {
     z-index: 2; background: var(--bg);
@@ -621,6 +678,10 @@ button, input, textarea { font-family: var(--font-ui); }
   }
   .editor-back-btn:active { color: var(--accent); }
   .file-tree-row, .file-tree-up { padding: 11px 12px !important; }
+  /* No hover on touch — row actions stay visible, at tap size. */
+  .file-tree-actions { opacity: 1; }
+  .file-tree-act { width: 32px; height: 32px; font-size: 14px; }
+  .file-tree-new { padding: 7px 11px; font-size: 12px; }
 
   /* Git: cards breathe, action rows stack instead of squeezing. */
   #git-panel { padding: 9px 9px calc(12px + env(safe-area-inset-bottom)); gap: 9px; }

@@ -115,9 +115,40 @@ Mục tiêu: relay đủ an toàn để mở ra internet công khai.
 
 ---
 
+## 🖱 File ops UI (mkdir / rename / delete) — mới
+
+Mục tiêu: đưa các handler `fs.*` đã có lên web UI trong Files view.
+
+- **FileTree** (`packages/relay/web/src/files.ts`):
+  - Head mới: breadcrumb + nút **"+ Folder"** → form inline (Enter xác nhận, Esc huỷ).
+  - Mỗi row có nút **✎ rename** (inline input) + **🗑 delete** — hiện khi hover desktop,
+    luôn hiện trên touch với tap size 32px (mobile CSS).
+  - Delete dùng **two-tap confirm** tại chỗ ("Delete? ✓ ✕"), xoá dir đệ quy.
+  - `runOp()` — một op mỗi lúc (`busy` guard), reload tree sau khi xong, banner thông báo
+    thành công/lỗi tự huỷ sau 4s. Validate tên client-side: cấm `/`, `\`, `.`, `..`.
+- **Fix #1 — banner bị xoá ngay**: `runOp` gọi `notice()` trước `loadDirectory()`/`render()`
+  mà cả hai wipe `container.innerHTML` → banner chớp mắt là mất. Đảo thứ tự: render trước,
+  notice sau.
+- **Fix #2 — overflow ngang 28px trên mobile**: `#editor` (slide-over ẩn) dùng
+  `transform: translateX(28px)` → ló ra ngoài viewport, body scrollWidth 418 > 390.
+  Handoff cũ báo "no overflow" là đo ở Term view. Fix gốc: `#files { overflow: hidden }`
+  trong breakpoint mobile (clip trong context của slide-over, đúng ý đồ thiết kế).
+- **Kiểm thử smoke (browser thật, relay 8789 ↔ agent thật, root = sandbox)**:
+  - mkdir `test-dir` → có trên disk; mkdir tên `"bad/name"` → banner "Invalid folder name".
+  - rename `old-name.js` → `renamed.js` → OK trên disk; rename `a.json` → `docs` (đụng tên
+    dir có sẵn) → banner đỏ EPERM từ server, file nguyên vẹn.
+  - delete file (two-tap) → mất trên disk; delete dir đệ quy → mất cả thư mục.
+  - Banner success hiện đúng sau fix #1.
+  - Mobile 390px (emulation): scrollW == clientW == 390 ở cả Term/Files/editor mở; nút row
+    32x32 luôn hiện; back chevron đóng editor về tree OK.
+  - Desktop: nút hành động reveal khi hover; editor + tree bình thường.
+  - `npm test` 58/58, typecheck sạch, web build sạch.
+
+---
+
 ## 📌 Việc tiếp theo (theo spec)
 
-1. Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.
+1. ~~Nút file ops trong web (mkdir/rename/delete) — handler agent đã sẵn, chưa có UI.~~ ✅ XONG (mục 🖱 ở trên).
 2. Xử lý push cần credential (SSH/PAT) — hiện chỉ chạy `git push` thô.
 3. ~~Cân nhắc auth mạnh hơn cho relay khi deploy VPS (rate‑limit, TLS).~~ ✅ XONG (mục 🔒 ở trên).
 4. Deploy thử lên VPS + test từ điện thoại thật.
@@ -131,3 +162,5 @@ Mục tiêu: relay đủ an toàn để mở ra internet công khai.
 *Cập nhật lúc 2026-09-09 (tối): smoke test end‑to‑end thật (Playwright, relay+agent) — xác nhận đăng nhập bền + reattach + replay scrollback + peer.gone/peer.back. Vá khoảng trống: tự mở terminal mới khi mọi tab đã chết sau khi agent restart.*
 
 *Cập nhật lúc 2026-09-09 (khuya): siết bảo mật relay — `ConnectionGuard` (cap kết nối/IP + tổng, chống brute‑force ACCESS_KEY, chuẩn hoá IPv6 /64), TLS nhúng trong Node + hot‑reload cert, hello‑deadline, maxPayload, audit log có cấu trúc. Test 58/58, smoke rate‑limit + TLS đạt.*
+
+*Cập nhật lúc 2026-09-09: file ops UI (mkdir/rename/delete + two‑tap confirm + banner) — smoke test browser thật hết các op, phát hiện & vá 2 bug: banner bị wipe bởi render(), overflow ngang 28px trên mobile do `#editor` translateX khi ẩn (`#files { overflow: hidden }`). Test 58/58.*
