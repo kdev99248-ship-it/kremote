@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, stat, symlink, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat, symlink, readFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsHandlers, FsError, looksBinary } from '../src/fs.ts';
@@ -111,8 +111,12 @@ test('fs.write enforces mtime conflict check', async () => {
     const r = await fs.write(file, 'v2', baseMtime);
     assert.ok(r.mtimeMs > 0);
 
-    // File changed on disk after the client read it
+    // File changed on disk after the client read it. Bump mtime explicitly:
+    // two writes inside the same NTFS/FAT timestamp tick can share an mtime,
+    // and the guard only rejects when |mtime - base| > 2ms.
     await writeFile(join(root, file), 'v3', 'utf8');
+    const later = new Date(st.mtimeMs + 1000);
+    await utimes(join(root, file), later, later);
     await assert.rejects(
       () => fs.write(file, 'v4', baseMtime),
       (err: unknown) => {

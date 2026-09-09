@@ -74,7 +74,8 @@ export class GitRunner {
       proc.on('close', (code, signal) => {
         if (code !== 0) {
           const err = new GitError(`git ${args[0]} failed: ${stderr || stdout || 'unknown error'}`, 'GIT_ERROR');
-          (err as any).code = code;
+          (err as any).exitCode = code;
+          (err as any).signal = signal;
           reject(err);
         } else {
           resolve({ stdout, stderr });
@@ -107,15 +108,20 @@ export class GitRunner {
         const behindStr = parts[3]?.replace('-', '') || '0';
         ahead = parseInt(aheadStr) || 0;
         behind = parseInt(behindStr) || 0;
+      } else if (line.startsWith('? ')) {
+        // Untracked: "? <path>"
+        files.push({ path: line.slice(2), index: '?', worktree: '?' });
       } else if (line.match(/^[1-2] /)) {
-        // porcelain v2: <flag> <score> <index> <worktree> <path>
-        const parts = line.split(' ');
-        // format: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"
-        // simplified: we just need status codes and path
-        const indexStatus = parts[1]?.charAt(0) ?? ' ';
-        const worktreeStatus = parts[1]?.charAt(1) ?? ' ';
-        const path = parts.slice(parts.length - 1)[0] || '';
-        files.push({ path, index: indexStatus, worktree: worktreeStatus });
+        // porcelain v2: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>" —
+        // 8 space-separated fields before the path; the path itself may
+        // contain spaces, so split off the first 8 fields only.
+        // Rename lines ("2 R. ... <path>\t<origPath>") also carry a tab.
+        const tab = line.indexOf('\t');
+        const head = tab === -1 ? line : line.slice(0, tab);
+        let rest = head.slice(head.indexOf(' ') + 1);
+        for (let i = 0; i < 7; i++) rest = rest.slice(rest.indexOf(' ') + 1);
+        const xy = head.split(' ')[1] ?? '  ';
+        files.push({ path: rest, index: xy.charAt(0), worktree: xy.charAt(1) });
       }
     }
 
@@ -134,6 +140,11 @@ export class GitRunner {
 
   async commit(repo: string, message: string, all = false): Promise<void> {
     const abs = await this.resolveRepo(repo);
+    if (all) {
+      // `git commit --all` only stages modifications/deletions of tracked
+      // files — untracked files are silently ignored. Stage everything first.
+      await this.runGit(abs, ['add', '-A']);
+    }
     const args = ['commit', '-m', message];
     if (all) args.push('--all');
     await this.runGit(abs, args);

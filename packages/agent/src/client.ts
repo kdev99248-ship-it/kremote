@@ -20,6 +20,8 @@ export class AgentClient {
   private pendingAccessKey = new Map<string, (r: { key: string; url: string; expiresMs: number }) => void>();
   private accessKeySeq = 0;
   private readonly cfg: AgentConfig;
+  /** Fired each time the relay accepts our hello (i.e. relay is up + authed). */
+  onHelloOk: (() => void) | null = null;
 
   constructor(cfg: AgentConfig) {
     this.cfg = cfg;
@@ -88,6 +90,7 @@ export class AgentClient {
     switch (frame.type) {
       case 'hello.res':
         if (!frame.ok) console.error(`[agent] relay rejected hello: ${frame.error}`);
+        else this.onHelloOk?.();
         return;
 
       case 'accesskey.res': {

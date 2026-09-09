@@ -11,9 +11,9 @@
   ],
   "scripts": {
     "test": "node --test packages/shared/test/*.test.ts packages/relay/test/*.test.ts packages/agent/test/*.test.ts",
-    "relay": "node packages/relay/src/index.ts",
-    "relay:keygen": "node packages/relay/src/keygen.ts",
-    "agent": "node packages/agent/src/index.ts",
+    "relay": "node --env-file-if-exists=.env packages/relay/src/index.ts",
+    "relay:keygen": "node --env-file-if-exists=.env packages/relay/src/keygen.ts",
+    "agent": "node --env-file-if-exists=.env packages/agent/src/index.ts",
     "web:dev": "npm run dev --workspace @kremote/web",
     "web:build": "npm run build --workspace @kremote/web",
     "typecheck": "tsc -b packages/shared packages/agent packages/relay"

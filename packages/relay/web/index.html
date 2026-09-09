@@ -2,33 +2,47 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c0c0c" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>kremote</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
 </head>
 <body>
   <!-- Login: ACCESS_KEY gate -->
   <div id="login" class="screen">
     <form id="login-form">
       <h1>kremote</h1>
+      <p class="tagline">Terminal, files and git on your own machine — from any browser.</p>
       <label for="access-key">Access key</label>
       <input id="access-key" type="text" autocomplete="off" autocapitalize="characters"
-             spellcheck="false" placeholder="XXXXXXXX" maxlength="16" />
+             autocorrect="off" spellcheck="false" inputmode="text"
+             placeholder="XXXXXXXX" maxlength="16" />
       <button type="submit">Connect</button>
       <p id="login-error" class="error" hidden></p>
+      <p class="hint">
+        Mint one on the host with <code>kremote keygen &lt;device&gt;</code>.
+        Keys are single-use.
+      </p>
     </form>
   </div>
 
-  <!-- Terminal workspace -->
-  <div id="app" class="screen" hidden>
+  <!-- Workspace -->
+  <div id="app" class="screen" data-view="terminals" hidden>
     <header id="tabbar">
-      <nav id="view-switcher">
+      <nav id="view-switcher" aria-label="View">
         <button class="view-btn active" data-view="terminals">Term</button>
         <button class="view-btn" data-view="files">Files</button>
         <button class="view-btn" data-view="git">Git</button>
       </nav>
-      <div id="tabs"></div>
-      <button id="new-tab" title="New terminal (Ctrl+Shift+T)">+</button>
-      <span id="conn-state" title="Connection state"></span>
+      <div id="tabs" role="tablist"></div>
+      <button id="new-tab" title="New terminal" aria-label="New terminal">+</button>
+      <span id="conn-state" title="Connection state" aria-hidden="true"></span>
     </header>
 
     <!-- Terminals view -->
@@ -42,21 +56,27 @@
 
     <!-- Git view -->
     <main id="git" class="view" hidden>
-      <div id="git-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;background:#101418;color:#8b95a1;">Git panel — coming soon</div>
+      <div id="git-panel"></div>
     </main>
 
-    <footer id="mobile-keys">
+    <footer id="mobile-keys" aria-label="Terminal keys">
       <button data-key="Control">Ctrl</button>
       <button data-key="Alt">Alt</button>
       <button data-key="Shift">Shift</button>
       <button data-seq="\x1b">Esc</button>
       <button data-seq="\t">Tab</button>
-      <button data-seq="\x1b[A">↑</button>
-      <button data-seq="\x1b[B">↓</button>
-      <button data-seq="\x1b[C">→</button>
-      <button data-seq="\x1b[D">←</button>
+      <button data-seq="\x03" title="Ctrl+C">C-c</button>
+      <button data-seq="\x04" title="Ctrl+D">C-d</button>
+      <button data-seq="\x0c" title="Ctrl+L">C-l</button>
+      <button data-seq="\x1a" title="Ctrl+Z">C-z</button>
+      <button data-seq="\x1b[A" aria-label="Up">↑</button>
+      <button data-seq="\x1b[B" aria-label="Down">↓</button>
+      <button data-seq="\x1b[D" aria-label="Left">←</button>
+      <button data-seq="\x1b[C" aria-label="Right">→</button>
       <button data-seq="|">|</button>
       <button data-seq="/">/</button>
+      <button data-seq="~">~</button>
+      <button data-seq="-">-</button>
     </footer>
   </div>
 

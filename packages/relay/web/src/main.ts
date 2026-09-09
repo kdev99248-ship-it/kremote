@@ -6,7 +6,9 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import {
   connect, isConnected, send, rpc, onFrame,
 } from './conn';
-import { FileTree, Editor } from './files';
+import { FileTree, loadEditor } from './files';
+import type { Editor } from './editor';
+import { GitPanel } from './git';
 
 // One WS to the relay; multiple terminal tabs multiplexed over it by termId.
 // Views: Terminals | Files | Git — switched by the header buttons.
@@ -19,7 +21,6 @@ interface Tab {
   host: HTMLElement;
   tabEl: HTMLElement;
   dead: boolean;
-  openId: string;
 }
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -37,7 +38,6 @@ const connState = $('conn-state');
 let tabs: Tab[] = [];
 let active: Tab | null = null;
 let reqSeq = 0;
-const pendingOpens = new Map<string, (termId: string | null) => void>();
 let reconnectTimer: number | undefined;
 
 // ── View switching ─────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ type ViewName = (typeof VIEWS)[number];
 let currentView: ViewName = 'terminals';
 
 let fileTree: FileTree | null = null;
-let editor: Editor | null = null;
+let gitPanel: GitPanel | null = null;
 
 function switchView(name: ViewName): void {
   currentView = name;
@@ -57,12 +57,15 @@ function switchView(name: ViewName): void {
   for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
     btn.classList.toggle('active', btn.dataset.view === name);
   }
+  // Mobile CSS keys off this to drop the tab row on non-terminal views.
+  appScreen.dataset.view = name;
   // Fit the terminal when switching back to it (layout may have changed).
   if (name === 'terminals' && active) fitSoon(active);
   // Mobile keys only matter for the terminal view.
   const mk = document.getElementById('mobile-keys');
   if (mk) mk.style.display = name === 'terminals' ? '' : 'none';
   if (name === 'files' && fileTree) fileTree.refresh();
+  if (name === 'git' && gitPanel) gitPanel.refresh();
 }
 
 for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
@@ -110,12 +113,25 @@ function showApp(): void {
   loginScreen.hidden = true;
   appScreen.hidden = false;
   if (!fileTree) {
-    fileTree = new FileTree($('file-tree'), (path) => void editor?.openFile(path));
-    editor = new Editor($('editor'), {
-      onSave: () => fileTree?.refresh(),
-    });
+    fileTree = new FileTree($('file-tree'), (path) => void openFile(path));
+  }
+  if (!gitPanel) {
+    gitPanel = new GitPanel($('git-panel'));
   }
   switchView('terminals');
+}
+
+// CodeMirror arrives on demand: the first file click fetches the editor chunk.
+// Later clicks reuse it. Clicks that land while the chunk is still in flight
+// are chained so the last one wins.
+let editorReady: Promise<Editor> | null = null;
+
+async function openFile(path: string): Promise<void> {
+  editorReady ??= loadEditor($('editor'), {
+    onSave: () => fileTree?.refresh(),
+  });
+  const ed = await editorReady;
+  await ed.openFile(path);
 }
 
 onFrame('peer.gone', () => {
@@ -154,14 +170,36 @@ function markAllDead(reason: string): void {
 
 async function newTab(): Promise<void> {
   if (!isConnected()) return;
-  const id = `open${++reqSeq}`;
 
   const term = new Terminal({
-    fontFamily: 'ui-monospace, Consolas, "Cascadia Mono", monospace',
+    fontFamily: '"JetBrains Mono", ui-monospace, Consolas, "Cascadia Mono", monospace',
     fontSize: 14,
     cursorBlink: true,
     scrollback: 5000,
-    theme: { background: '#101418', foreground: '#d7dde4', cursor: '#4ea1ff' },
+    theme: {
+      background: '#040404',
+      foreground: '#e5e5e5',
+      cursor: '#e46c4c',
+      cursorAccent: '#0c0c0c',
+      selectionBackground: 'rgba(228, 108, 76, .28)',
+      selectionInactiveBackground: 'rgba(228, 108, 76, .14)',
+      black: '#242424',
+      red: '#ff5f57',
+      green: '#22c55e',
+      yellow: '#febc2e',
+      blue: '#60a5fa',
+      magenta: '#c084fc',
+      cyan: '#22d3ee',
+      white: '#e5e5e5',
+      brightBlack: '#737373',
+      brightRed: '#ff8178',
+      brightGreen: '#4ade80',
+      brightYellow: '#fde047',
+      brightBlue: '#93c5fd',
+      brightMagenta: '#d8b4fe',
+      brightCyan: '#67e8f9',
+      brightWhite: '#fafafa',
+    },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -185,7 +223,7 @@ async function newTab(): Promise<void> {
 
   const tab: Tab = {
     termId: '', name: label.textContent!, term, fit, host, tabEl,
-    dead: false, openId: id,
+    dead: false,
   };
   tabs.push(tab);
 
@@ -202,18 +240,20 @@ async function newTab(): Promise<void> {
   activate(tab);
   fitSoon(tab);
 
-  await new Promise<void>((res) => {
-    pendingOpens.set(id, (termId) => {
-      if (termId) {
-        tab.termId = termId;
-        sendResize(tab);
-      } else {
-        closeTab(tab, true);
-      }
-      res();
-    });
-    send({ type: 'term.open', id, cols: term.cols, rows: term.rows });
-  });
+  try {
+    const res = await rpc<{ ok: boolean; termId?: string; error?: string }>(
+      { type: 'term.open', cols: term.cols, rows: term.rows });
+    if (res.ok && res.termId) {
+      tab.termId = res.termId;
+      sendResize(tab);
+    } else {
+      console.error('term.open failed:', res.error);
+      closeTab(tab, true);
+    }
+  } catch (e) {
+    console.error('term.open timed out:', e);
+    closeTab(tab, true);
+  }
 }
 
 function activate(tab: Tab): void {

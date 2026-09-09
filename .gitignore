@@ -1,6 +1,10 @@
 node_modules/
 packages/relay/public/
 .tmp-tscheck/
+.tmp-agent-root/
 .playwright-mcp/
 .serena/
 *.log
+*.tsbuildinfo
+.env
+.kremote/

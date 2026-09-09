@@ -1,13 +1,36 @@
 :root {
   color-scheme: dark;
-  --bg: #101418;
-  --panel: #171c22;
-  --border: #2a323c;
-  --fg: #d7dde4;
-  --muted: #8b95a1;
-  --accent: #4ea1ff;
-  --danger: #ff6b6b;
-  --ok: #58d68d;
+  /* Palette taken from 9remote.cc + docs/images reference:
+     near-black ground, coral accent, hairline borders, 8px controls. */
+  --bg: #0c0c0c;
+  --bg-deep: #040404;
+  --panel: #141414;
+  --panel-2: #1c1c1c;
+  --hover: #242424;
+  --active: #2c2c2c;
+  --border: #242424;
+  --border-2: #2c2c2c;
+  --hairline: rgba(255, 255, 255, .08);
+  --fg: #fafafa;
+  --fg-2: #e5e5e5;
+  --muted: #a1a1a1;
+  --faint: #737373;
+  --accent: #e46c4c;
+  --accent-hi: #ef7d5e;
+  --accent-dim: rgba(228, 108, 76, .12);
+  --accent-line: rgba(228, 108, 76, .40);
+  --danger: #ff5f57;
+  --warn: #febc2e;
+  --ok: #22c55e;
+  --info: #60a5fa;
+  --r-card: 12px;
+  --r-ctl: 8px;
+  --r-sm: 4px;
+  --tap: 44px;
+  --shadow-card: 0 20px 60px rgba(0, 0, 0, .55);
+  --shadow-cta: 0 8px 26px -8px rgba(229, 106, 74, .48), 0 0 0 1.7px rgba(229, 106, 74, .40);
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Cascadia Mono', monospace;
 }
 
 * { box-sizing: border-box; }
@@ -17,114 +40,548 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 14px/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
 }
 
+body { overflow: hidden; }
+
+button, input, textarea { font-family: var(--font-ui); }
+
+::selection { background: var(--accent-dim); color: var(--fg); }
+
+:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+
+/* Thin, near-invisible scrollbars — the reference shows no chrome. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
 .screen { height: 100%; display: flex; flex-direction: column; }
+.view { flex: 1; min-height: 0; }
 [hidden] { display: none !important; }
 
+.error { color: var(--danger); margin: 0; font-size: 13px; }
+
 /* ── Login ─────────────────────────────────────────────────────────── */
-#login { align-items: center; justify-content: center; }
+#login {
+  align-items: center; justify-content: center;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(228, 108, 76, .10), transparent 60%),
+    var(--bg-deep);
+}
 #login form {
-  width: min(360px, calc(100vw - 32px));
+  width: min(380px, 100%);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 28px;
+  border-radius: 16px;
+  padding: 32px 28px;
   display: flex; flex-direction: column; gap: 12px;
+  box-shadow: var(--shadow-card);
 }
-#login h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; letter-spacing: .02em; }
-#login label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+#login h1 {
+  margin: 0 0 2px; font-size: 24px; font-weight: 700; letter-spacing: -.025em;
+}
+#login h1::before {
+  content: ''; display: inline-block; width: 9px; height: 9px;
+  border-radius: 50%; background: var(--accent); margin-right: 10px;
+  vertical-align: 2px;
+  box-shadow: 0 0 12px rgba(228, 108, 76, .7);
+}
+#login .tagline { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+#login label {
+  color: var(--muted); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .12em;
+}
 #login input {
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px 12px; font: 16px/1.2 ui-monospace, Consolas, monospace;
+  background: var(--bg-deep); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px; font: 16px/1.2 var(--font-mono);
   letter-spacing: .18em; text-transform: uppercase; text-align: center;
+  width: 100%;
+  transition: border-color .15s, box-shadow .15s;
 }
-#login input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-#login button {
-  margin-top: 6px; padding: 10px;
-  background: var(--accent); color: #0b1220; border: 0; border-radius: 6px;
-  font-weight: 600; cursor: pointer;
+#login input::placeholder { color: var(--faint); letter-spacing: .18em; }
+#login input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
-#login button:disabled { opacity: .5; cursor: default; }
-.error { color: var(--danger); margin: 0; font-size: 13px; }
+#login button[type="submit"] {
+  margin-top: 8px; padding: 13px; min-height: var(--tap);
+  background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+  font-weight: 600; font-size: 14px; cursor: pointer;
+  box-shadow: var(--shadow-cta);
+  transition: background .15s, transform .12s, opacity .15s;
+}
+#login button[type="submit"]:hover:not(:disabled) { background: var(--accent-hi); transform: scale(1.02); }
+#login button[type="submit"]:active:not(:disabled) { transform: scale(.98); }
+#login button[type="submit"]:disabled { opacity: .5; cursor: default; }
+#login .hint {
+  margin: 4px 0 0; color: var(--faint); font-size: 12px; text-align: center;
+  line-height: 1.6;
+}
+#login .hint code {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 1px 5px;
+  font: 11px var(--font-mono); color: var(--muted);
+}
 
 /* ── App chrome ────────────────────────────────────────────────────── */
 #tabbar {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--panel); border-bottom: 1px solid var(--border);
-  padding: 6px 8px; min-height: 40px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px; min-height: 48px; flex: none;
 }
-#view-switcher { display: flex; gap: 2px; margin-right: 4px; flex: none; }
+#view-switcher {
+  display: flex; gap: 2px; flex: none;
+  background: var(--bg-deep); border: 1px solid var(--border);
+  border-radius: 10px; padding: 3px;
+}
 .view-btn {
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 6px;
-  padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 0; border-radius: 7px;
+  padding: 6px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: color .15s, background .15s;
 }
-.view-btn:hover { color: var(--fg); background: var(--bg); }
-.view-btn.active { color: var(--accent); background: var(--bg); }
-#tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; scrollbar-width: thin; }
+.view-btn:hover { color: var(--fg-2); }
+.view-btn.active {
+  color: var(--fg); background: var(--active);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+#tabs {
+  display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0;
+  scrollbar-width: none;
+}
+#tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: flex; align-items: center; gap: 6px;
-  background: var(--bg); color: var(--muted);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 6px 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  background: transparent; color: var(--faint);
+  border: 1px solid transparent; border-radius: var(--r-ctl);
+  padding: 5px 6px 5px 11px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap; flex: none;
+  transition: color .15s, background .15s, border-color .15s;
 }
-.tab.active { color: var(--fg); border-color: var(--accent); }
+.tab:hover { color: var(--muted); background: var(--panel-2); }
+.tab.active {
+  color: var(--fg); background: var(--panel-2); border-color: var(--border);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
 .tab.dead { color: var(--danger); }
 .tab .x {
   border: 0; background: transparent; color: inherit; cursor: pointer;
-  font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+  font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 5px;
 }
-.tab .x:hover { background: var(--border); }
+.tab .x:hover { background: var(--border-2); color: var(--fg); }
 #new-tab {
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
-  width: 28px; height: 28px; font-size: 16px; cursor: pointer;
+  background: transparent; color: var(--muted);
+  border: 1px dashed var(--border-2); border-radius: var(--r-ctl);
+  width: 30px; height: 30px; font-size: 16px; cursor: pointer; flex: none;
+  transition: color .15s, border-color .15s, background .15s;
 }
-#conn-state { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-#conn-state.on { background: var(--ok); }
-#conn-state.off { background: var(--danger); }
+#new-tab:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+#conn-state {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--faint);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .04);
+}
+#conn-state.on { background: var(--ok); box-shadow: 0 0 8px rgba(34, 197, 94, .65); }
+#conn-state.off { background: var(--danger); box-shadow: 0 0 8px rgba(255, 95, 87, .55); }
 
-#terminals { flex: 1; min-height: 0; position: relative; }
-.term-host { position: absolute; inset: 0; padding: 4px; }
+#terminals { position: relative; background: var(--bg-deep); }
+.term-host { position: absolute; inset: 0; padding: 8px 10px; overflow: hidden; }
 .term-host[hidden] { display: none !important; }
 
 /* ── Files view ────────────────────────────────────────────────────── */
-#files { display: flex; flex: 1; min-height: 0; }
+#files { display: flex; }
 #file-tree {
-  width: 260px; flex: none;
+  width: 264px; flex: none;
   background: var(--panel);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-#editor { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-#editor .cm-editor { flex: 1; min-height: 0; }
-#editor .cm-scroller { overflow: auto; }
-@media (max-width: 700px) {
-  #file-tree { width: 200px; }
-}
+#file-tree ul { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; min-height: 0; }
+#editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+#editor .cm-editor { flex: 1; min-height: 0; background: var(--bg); color: var(--fg-2); }
+#editor .cm-scroller { overflow: auto; font-family: var(--font-mono); line-height: 1.6; }
+#editor .cm-gutters { background: var(--bg); border-right: 1px solid var(--border); color: var(--faint); }
+#editor .cm-activeLine { background: rgba(255, 255, 255, .03); }
+#editor .cm-activeLineGutter { background: rgba(255, 255, 255, .05); }
+#editor .cm-selectionBackground, #editor .cm-content ::selection { background: var(--accent-dim) !important; }
+#editor .cm-cursor, #editor .cm-dropCursor { border-left-color: var(--accent); }
+#editor .cm-focused { outline: none; }
 
-.file-tree li:hover { background: var(--bg); }
-.file-tree li { color: var(--fg); }
+.editor-save-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; min-height: 44px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.editor-path {
+  flex: 1; min-width: 0; font: 12px var(--font-mono); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.editor-status { font-size: 12px; color: var(--muted); flex: none; }
+.editor-status.ok { color: var(--ok); }
+.editor-status.saving { color: var(--warn); }
+.editor-status.error { color: var(--danger); }
+.editor-save-btn {
+  background: var(--accent); color: #fff;
+  border: 0; border-radius: 7px; padding: 6px 14px; min-height: 32px;
+  font-size: 12px; font-weight: 600; cursor: pointer; flex: none;
+  transition: background .15s, transform .12s;
+}
+.editor-save-btn:hover:not(:disabled) { background: var(--accent-hi); }
+.editor-save-btn:active:not(:disabled) { transform: scale(.96); }
+.editor-save-btn:disabled { opacity: .45; cursor: default; }
+.editor-reload-btn {
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--hairline); border-radius: 7px;
+  padding: 6px 12px; min-height: 32px;
+  font-size: 12px; font-weight: 600; cursor: pointer; flex: none;
+  transition: background .15s, color .15s;
+}
+.editor-reload-btn:hover { background: var(--hover); color: var(--fg); }
+.editor-note {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--muted); font-size: 14px; padding: 24px;
+  text-align: center;
+}
+.editor-note-error { color: var(--danger); }
+
+.file-tree li { color: var(--fg-2); }
+.file-tree li:hover { background: var(--panel-2); }
+
+.file-tree-path {
+  padding: 9px 12px; font: 12px var(--font-mono);
+  color: var(--muted); border-bottom: 1px solid var(--border);
+  flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--panel);
+}
+.file-tree-up {
+  padding: 7px 12px !important; cursor: pointer;
+  font-size: 13px; color: var(--muted) !important;
+  border-radius: 0;
+}
+.file-tree-up:hover { color: var(--accent) !important; background: var(--accent-dim) !important; }
+.file-tree-empty { padding: 12px; color: var(--faint); font-style: italic; font-size: 13px; }
+.file-tree-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 12px !important; cursor: pointer;
+  font-size: 13px; border-radius: 0;
+  transition: background .12s, color .12s;
+}
+.file-tree-row.is-dir { font-weight: 500; color: var(--fg); }
+.file-tree-row.is-dir::before { content: '›'; color: var(--faint); flex: none; width: 8px; }
+.file-tree-size {
+  margin-left: auto;
+  font-size: 11px; color: var(--faint); flex: none;
+  font-variant-numeric: tabular-nums; font-family: var(--font-mono);
+}
+.file-tree-note { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+.file-tree-error { color: var(--danger) !important; }
+
+/* ── Git view ──────────────────────────────────────────────────────── */
+#git { overflow: hidden; }
+#git-panel {
+  height: 100%; overflow-y: auto;
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.git-repo-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.git-repo-input {
+  flex: 1 1 220px; min-width: 0;
+  background: var(--bg-deep); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: 9px 12px; font: 13px/1.2 var(--font-mono);
+  transition: border-color .15s, box-shadow .15s;
+}
+.git-repo-input::placeholder { color: var(--faint); }
+.git-repo-input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.git-btn {
+  background: var(--panel-2); color: var(--fg-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-ctl);
+  padding: 7px 13px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; flex: none;
+  transition: background .15s, border-color .15s, color .15s, transform .12s;
+}
+.git-btn:hover:not(:disabled) { background: var(--hover); border-color: var(--border-2); color: var(--fg); }
+.git-btn:active:not(:disabled) { transform: scale(.97); }
+.git-btn:disabled { opacity: .45; cursor: default; }
+.git-note { color: var(--muted); margin: 6px 0; font-size: 13px; }
+.git-error { color: var(--danger); white-space: pre-wrap; word-break: break-word; }
+
+.git-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-card); padding: 11px 13px;
+}
+.git-branch { font-weight: 600; font-size: 13.5px; color: var(--fg); }
+.git-branch::before { content: '⎇ '; color: var(--accent); }
+.git-sync { color: var(--muted); font-size: 12px; font-family: var(--font-mono); }
+.git-sync.in-sync { color: var(--ok); }
+.git-actions { margin-left: auto; display: flex; gap: 6px; }
+.git-push { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+.git-push:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-hi); }
+
+.git-files {
+  list-style: none; margin: 0; padding: 0;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-card); overflow: hidden;
+}
+.git-file {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 13px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  transition: background .12s;
+}
+.git-file:last-child { border-bottom: 0; }
+.git-file:hover { background: var(--panel-2); }
+.git-file.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+.git-path {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+  font-family: var(--font-mono); font-size: 12.5px;
+}
+.git-code {
+  flex: none; width: 22px; text-align: center;
+  font: 600 11px/20px var(--font-mono);
+  border-radius: var(--r-sm); background: var(--panel-2); color: var(--muted);
+}
+.git-code.code-M { color: var(--warn); }
+.git-code.code-A { color: var(--ok); }
+.git-code.code-D { color: var(--danger); }
+.git-code.code-R, .git-code.code-C { color: var(--info); }
+.git-code.code-U { color: var(--danger); }
+.git-code.code-\? { color: var(--faint); }
+
+.git-commit { display: flex; flex-direction: column; gap: 8px; }
+.git-msg {
+  background: var(--bg-deep); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: 10px 12px; font: 13px/1.5 var(--font-mono);
+  resize: vertical; min-height: 44px; max-height: 140px; width: 100%;
+  transition: border-color .15s, box-shadow .15s;
+}
+.git-msg::placeholder { color: var(--faint); }
+.git-msg:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.git-commit-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.git-all-label {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12px; cursor: pointer; user-select: none;
+}
+.git-all-label input { accent-color: var(--accent); width: 15px; height: 15px; }
+.git-commit-btn {
+  margin-left: auto;
+  background: var(--accent); color: #fff; border-color: transparent;
+  font-weight: 600; box-shadow: var(--shadow-cta);
+}
+.git-commit-btn:hover:not(:disabled) { background: var(--accent-hi); border-color: transparent; }
+
+.git-pane {
+  flex: 1; min-height: 140px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.git-diff-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 11px; border-bottom: 1px solid var(--border); flex: none;
+  background: var(--panel-2);
+}
+.git-diff-path {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 12px var(--font-mono); color: var(--fg);
+}
+.git-toggle {
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 4px 10px; font: 12px var(--font-mono); cursor: pointer; flex: none;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.git-toggle:hover { color: var(--fg); background: var(--hover); }
+.git-toggle.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+.git-diff, .git-log {
+  margin: 0; padding: 10px 12px;
+  overflow: auto; flex: 1; min-height: 0;
+  font: 12px/1.65 var(--font-mono);
+  white-space: pre; user-select: text;
+  background: var(--bg-deep);
+  -webkit-overflow-scrolling: touch;
+}
+.git-diff-empty { color: var(--faint); }
+.git-diff .d-file { color: var(--fg); font-weight: 600; }
+.git-diff .d-hunk { color: var(--info); }
+.git-diff .d-add { color: #6ee7a0; background: rgba(34, 197, 94, .10); display: inline-block; width: 100%; }
+.git-diff .d-del { color: #ff9b95; background: rgba(255, 95, 87, .10); display: inline-block; width: 100%; }
+.git-log-entry { display: flex; gap: 9px; padding: 4px 0; align-items: baseline; }
+.git-hash { color: var(--accent); flex: none; }
+.git-subject {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--fg-2);
+}
+.git-author {
+  color: var(--faint); flex: none; max-width: 30%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ── Mobile keys ───────────────────────────────────────────────────── */
 #mobile-keys {
-  display: none; gap: 4px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  display: none; gap: 6px; flex: none;
+  padding: 7px 9px calc(7px + env(safe-area-inset-bottom));
   background: var(--panel); border-top: 1px solid var(--border);
-  overflow-x: auto;
+  overflow-x: auto; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+#mobile-keys::-webkit-scrollbar { display: none; }
 #mobile-keys button {
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 8px 12px; font: 13px/1 ui-monospace, Consolas, monospace;
+  background: var(--panel-2); color: var(--fg-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-ctl);
+  min-width: var(--tap); min-height: 40px; padding: 9px 13px;
+  font: 13px/1 var(--font-mono);
   cursor: pointer; flex: none; touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .1s, color .1s, border-color .1s;
 }
-#mobile-keys button.stuck { border-color: var(--accent); color: var(--accent); }
+#mobile-keys button:active { background: var(--active); color: var(--fg); }
+#mobile-keys button.stuck {
+  border-color: var(--accent); color: var(--accent);
+  background: var(--accent-dim);
+}
 
 @media (pointer: coarse) {
   #mobile-keys { display: flex; }
+  .tab .x, .git-file, .file-tree-row, .view-btn { -webkit-tap-highlight-color: transparent; }
+}
+
+/* Hover states read as stuck on touch — neutralise them where there is no hover. */
+@media (hover: none) {
+  .tab:hover { background: transparent; color: var(--faint); }
+  .tab.active:hover { background: var(--panel-2); color: var(--fg); }
+  .git-file:hover { background: transparent; }
+  .git-file.selected:hover { background: var(--accent-dim); }
+  .file-tree li:hover { background: transparent; }
+  .view-btn:hover { color: var(--muted); }
+  .view-btn.active:hover { color: var(--fg); }
+}
+
+/* ── Responsive mobile (≤ 700px) ───────────────────────────────────── */
+@media (max-width: 700px) {
+  /* Tabbar wraps: switcher + status on row 1, tabs + new on row 2. */
+  #tabbar {
+    flex-wrap: wrap; gap: 7px;
+    padding: 7px 9px; min-height: 0;
+    position: relative; z-index: 20;
+  }
+  #view-switcher { order: 1; flex: 1; }
+  .view-btn { flex: 1; padding: 9px 4px; font-size: 12.5px; min-height: 34px; }
+  #conn-state { order: 2; margin-left: 2px; }
+  #tabs { order: 3; flex: 1 1 100%; }
+  #new-tab { order: 4; width: 34px; height: 34px; }
+
+  /* Tabs are meaningless outside the terminal view — reclaim the row. */
+  #app[data-view="files"] #tabs,
+  #app[data-view="files"] #new-tab,
+  #app[data-view="git"] #tabs,
+  #app[data-view="git"] #new-tab { display: none; }
+
+  .tab { padding: 7px 7px 7px 12px; font-size: 12.5px; min-height: 34px; }
+  .tab .x {
+    font-size: 17px;
+    line-height: 1;
+    min-width: 34px;
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: -3px;
+  }
+  .term-host { padding: 4px 5px; }
+
+  /* Files: tree and editor become full-screen layers; editor slides over tree. */
+  #files { position: relative; }
+  #file-tree, #editor { position: absolute; inset: 0; width: auto; border-right: 0; }
+  #editor {
+    z-index: 2; background: var(--bg);
+    visibility: hidden; transform: translateX(28px);
+    opacity: 0; transition: opacity .2s ease, transform .2s ease, visibility 0s .2s;
+  }
+  #editor.editor-open {
+    visibility: visible; transform: translateX(0); opacity: 1;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .editor-save-bar { padding: 6px 8px; gap: 8px; min-height: var(--tap); }
+  .editor-path { font-size: 11.5px; }
+  .editor-status { font-size: 11.5px; }
+  .editor-save-btn, .editor-reload-btn { padding: 9px 14px; min-height: 36px; }
+  .editor-back-btn {
+    display: flex; align-items: center; justify-content: center; flex: none;
+    background: transparent; color: var(--fg);
+    border: 0; font-size: 24px; line-height: 1;
+    width: var(--tap); height: 36px; padding: 0; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .editor-back-btn:active { color: var(--accent); }
+  .file-tree-row, .file-tree-up { padding: 11px 12px !important; }
+
+  /* Git: cards breathe, action rows stack instead of squeezing. */
+  #git-panel { padding: 9px 9px calc(12px + env(safe-area-inset-bottom)); gap: 9px; }
+  .git-head, .git-pane, .git-files { border-radius: 10px; }
+  .git-file { padding: 11px 12px; }
+  .git-actions { margin-left: 0; width: 100%; }
+  .git-actions .git-btn { flex: 1; }
+  .git-btn { padding: 9px 13px; min-height: 36px; }
+  .git-repo-input { padding: 10px 12px; font-size: 12.5px; }
+  .git-commit-btn { margin-left: 0; width: 100%; min-height: var(--tap); padding: 11px; }
+  .git-all-label { font-size: 12.5px; padding: 4px 0; }
+  .git-msg { min-height: 64px; font-size: 12.5px; }
+  .git-diff, .git-log { font-size: 11.5px; line-height: 1.6; padding: 8px 9px; }
+  .git-log-entry { flex-wrap: wrap; gap: 4px 9px; }
+  .git-author { display: none; }
+
+  #login form { padding: 28px 22px; }
+}
+@media (min-width: 701px) {
+  .editor-back-btn { display: none; }
+}
+
+/* ── Small phones ──────────────────────────────────────────────────── */
+@media (max-width: 400px) {
+  .view-btn { padding: 9px 2px; font-size: 12px; letter-spacing: -.01em; }
+  #login form { padding: 24px 18px; }
+  #login h1 { font-size: 22px; }
+  .git-path { font-size: 12px; }
+}
+
+/* Landscape phones: the soft keyboard eats vertical space — compact bars. */
+@media (max-width: 900px) and (max-height: 500px) {
+  #tabbar { padding: 4px 8px; gap: 6px; }
+  .view-btn { min-height: 28px; padding: 5px 8px; }
+  #tabs { flex: 1 1 auto; }
+  .tab { min-height: 28px; padding: 4px 6px 4px 10px; }
+  #new-tab { width: 28px; height: 28px; }
+  #mobile-keys { padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); gap: 5px; }
+  #mobile-keys button { min-height: 32px; min-width: 38px; padding: 6px 10px; }
+  #git-panel { padding: 6px 8px; gap: 6px; }
+  .editor-save-bar { min-height: 36px; padding: 4px 8px; }
+  .editor-back-btn { height: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  #editor { transform: none !important; }
 }

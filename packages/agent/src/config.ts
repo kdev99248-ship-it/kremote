@@ -25,7 +25,9 @@ export async function loadConfig(): Promise<AgentConfig> {
   const cfg = JSON.parse(raw) as AgentConfig;
   if (!cfg.relayUrl) throw new Error(`${path}: missing relayUrl`);
   if (!cfg.deviceKey) throw new Error(`${path}: missing deviceKey`);
-  cfg.root = cfg.root ? resolve(cfg.root) : homedir();
+  // KREMOTE_AGENT_ROOT overrides the config file's root (fs.*/git.* base dir).
+  cfg.root = process.env.KREMOTE_AGENT_ROOT ?? cfg.root ?? homedir();
+  cfg.root = resolve(cfg.root);
   return cfg;
 }
 
