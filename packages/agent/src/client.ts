@@ -103,6 +103,15 @@ export class AgentClient {
       case 'hello.res': {
         if (!frame.ok) {
           console.error(`[agent] relay rejected hello: ${frame.error}`);
+          // Enrollment refusals are permanent (the relay is full / closed):
+          // retrying just spams the relay and the log. Stop and tell the
+          // operator what to do.
+          if (frame.error === 'device registration closed' && !this.cfg.deviceKey) {
+            console.error('[agent] This relay has reached its device limit (KREMOTE_MAX_DEVICES).');
+            console.error('[agent] If you own the relay: raise the limit in /etc/kremote/relay.env,');
+            console.error('[agent] or clear the device store: sudo rm /var/lib/kremote/store.json && sudo systemctl restart kremote-relay');
+            process.exit(1);
+          }
           return;
         }
         // Zero-touch enrollment succeeded: the relay minted a DEVICE_KEY for
