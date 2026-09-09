@@ -48,14 +48,29 @@
       </nav>
       <div id="tabs" role="tablist"></div>
       <button id="new-tab" title="New terminal" aria-label="New terminal">+</button>
-      <button id="history-btn" title="Command history" aria-label="Command history">⌘</button>
-      <button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
-      <button id="notify-bell" title="Notify when a long command finishes" aria-label="Toggle command-finished notifications" hidden>🔔</button>
+      <button id="more-btn" title="More" aria-label="More actions" aria-haspopup="menu">•••</button>
       <span id="conn-state" title="Connection state" aria-hidden="true"></span>
+
+      <!-- Overflow menu: secondary actions live here to keep the bar tidy. -->
+      <div id="more-menu" role="menu" hidden>
+        <button class="more-item" data-act="history" role="menuitem">⌘&nbsp; Command history</button>
+        <button class="more-item" data-act="search" role="menuitem">🔍&nbsp; Search terminal</button>
+        <button class="more-item" id="more-notify" data-act="notify" role="menuitem">🔔&nbsp; Notifications</button>
+        <button class="more-item" data-act="settings" role="menuitem">⚙&nbsp; Settings</button>
+      </div>
     </header>
 
     <!-- Terminals view -->
-    <main id="terminals" class="view"></main>
+    <main id="terminals" class="view">
+      <!-- Scrollback search (#6): floats over the active terminal window. -->
+      <div id="term-search" hidden>
+        <input id="term-search-input" type="search" placeholder="Search output…"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button id="term-search-prev" title="Previous match" aria-label="Previous match">↑</button>
+        <button id="term-search-next" title="Next match" aria-label="Next match">↓</button>
+        <button id="term-search-close" title="Close" aria-label="Close search">✕</button>
+      </div>
+    </main>
 
     <!-- Files view -->
     <main id="files" class="view" hidden>
@@ -81,6 +96,7 @@
         <button id="history-close" title="Close">✕</button>
       </div>
       <input id="history-search" type="search" placeholder="Search commands…" autocomplete="off" />
+      <div id="history-pinned" role="list"></div>
       <div id="history-list" role="listbox"></div>
     </div>
 
@@ -109,6 +125,9 @@
     </div>
 
     <footer id="mobile-keys" aria-label="Terminal keys">
+      <button data-act="paste" aria-label="Paste clipboard" title="Paste">📋</button>
+      <button data-act="copy" aria-label="Copy selection" title="Copy selection">⧉</button>
+      <button data-act="search" aria-label="Search output" title="Search output">🔍</button>
       <button data-key="Control">Ctrl</button>
       <button data-key="Alt">Alt</button>
       <button data-key="Shift">Shift</button>

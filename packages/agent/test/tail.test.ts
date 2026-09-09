@@ -72,6 +72,51 @@ test('tail detects rotation (shrink → restart from 0)', async () => {
   }
 });
 
+test('tail setNotify fires onMatch once per chunk for matching lines', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kremote-tailn-'));
+  const file = join(dir, 'app.log');
+  await writeFile(file, 'boot\n');
+  try {
+    const matches: { path: string; line: string }[] = [];
+    const t = new TailManager(
+      dir,
+      () => {},
+      () => {},
+      (_id, path, line) => matches.push({ path, line }),
+    );
+    const h = await t.watch('app.log', { fromEnd: true });
+    assert.equal(t.setNotify(h.watchId, 'ERROR'), true);
+    await sleep(200);
+    await appendFile(file, 'INFO ok\nERROR boom\nERROR again\n'); // one chunk, 2 matches
+    await sleep(500);
+    assert.equal(matches.length, 1, 'one push per chunk, not per line');
+    assert.match(matches[0].line, /ERROR boom/);
+    assert.equal(matches[0].path, 'app.log');
+    // Clearing the pattern stops alerts.
+    assert.equal(t.setNotify(h.watchId, ''), true);
+    await appendFile(file, 'ERROR silent\n');
+    await sleep(400);
+    assert.equal(matches.length, 1);
+    t.closeAll();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('tail setNotify returns false for unknown watch / invalid regex', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kremote-tailn2-'));
+  await writeFile(join(dir, 'f.log'), 'x\n');
+  try {
+    const t = new TailManager(dir, () => {}, () => {});
+    assert.equal(t.setNotify('nope', 'ERROR'), false);
+    const h = await t.watch('f.log', { fromEnd: true });
+    assert.equal(t.setNotify(h.watchId, '('), false); // invalid regex
+    t.closeAll();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('tail rejects paths outside root and caps concurrent watches', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'kremote-tail4-'));
   await writeFile(join(dir, 'f1.log'), 'x');

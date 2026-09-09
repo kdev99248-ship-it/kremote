@@ -277,6 +277,28 @@ Mục tiêu: trên mobile, mở kremote như app riêng (icon, fullscreen, khôn
 
 ---
 
+## 📲 Web Push (tail alerts tới khi app đóng) + ••• menu — mới
+
+Mục tiêu: alert pattern của Logs (#4) phải tới được điện thoại **kể cả khi app đang đóng** (in-app notification chỉ phủ khi trang mở).
+
+- **Kiến trúc: agent là push sender** — relay không bao giờ thấy key:
+  - `agent/src/push.ts` (mới): `PushSender` sinh + persist cặp key **VAPID** vào config agent (lần đầu dùng), lưu browser subscriptions (`pushSubs[]`), tự POST thẳng tới push service (FCM/…). Sub hết hạn (404/410) tự bị prune. Token không nằm trên relay, không qua argv.
+  - Protocol (`shared`): `push.config`/`push.config.res` (lấy VAPID public key), `push.subscribe`/`res`, `push.unsubscribe`; thêm `tail.notify` — đặt/clear **regex alert phía agent** cho watch đang sống.
+  - `agent/tail.ts`: `setNotify(watchId, pattern)`; mỗi chunk mới test từng dòng, khớp dòng đầu → `onMatch` → push (`title: tail: <path>`). **1 push mỗi chunk** (burst 5 dòng ERROR = 1 notification, tag `kremote-tail` gộp).
+  - Web (`web/src/push.ts`): register SW → `push.config` → `pushManager.subscribe` → đưa subscription về agent. Bật tự động khi bấm 🔔 trong Logs; nút 🔔 = bật cả in-app notify + server-side alert.
+  - `sw.js`: handler `push` (render notification, icon, click → focus/open) + `notificationclick`; version bump `kremote-v2`.
+- **UI gom gọn**: header thay 3 nút rời (⌘ ⚙ 🔔) bằng menu **•••** (history, search, notifications, settings).
+- **Sửa phụ**: thiếu dep `@xterm/addon-search` trong node_modules làm `web:build` gãy — `npm install` vá (package.json đã khai báo, không phải lỗi code).
+
+- **Kiểm thử**: `npm test` **82/82** (+2 tail.setNotify unit, +4 PushSender unit), typecheck + web:build sạch.
+- **Smoke E2E thật** (relay 8799 ↔ agent zero-touch, browser thật, FCM endpoint thật):
+  - Bật 🔔 → permission granted → subscription FCM tạo → agent persist `vapid` + 1 sub trong config.
+  - Append dòng INFO → **không** push; append `ERROR …` → notification hiện với title `tail: demo.log`, body đúng dòng, tag `kremote-tail`.
+  - Append burst 5 dòng ERROR → vẫn **1** notification (đúng thiết kế 1 push/chunk + tag replace).
+  - Live tail view render đủ 8 dòng (2 seed + INFO + 5 ERROR). Relay log sạch, không leak frame.
+
+---
+
 ## ⚙️ 4 tính năng terminal — Settings · Bio-lock · Log tail · History — mới
 
 Bốn tính năng bổ trợ cho terminal (2 web-only, 1 full-stack, 1 web-only):

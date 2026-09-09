@@ -8,7 +8,7 @@
  *  - Everything else (/ws websocket, /healthz, API): never intercepted.
  *
  * Version bump = delete the old cache. Keep V only when file lists change. */
-const V = 'kremote-v1';
+const V = 'kremote-v2';
 const SHELL = '/index.html';
 
 self.addEventListener('install', (e) => {
@@ -53,5 +53,34 @@ self.addEventListener('fetch', (e) => {
         return res;
       })
       .catch(() => caches.match(SHELL)),
+  );
+});
+
+// ── Web Push (tail alerts) ─────────────────────────────────────────────────
+// The agent is the sender; here we just render whatever payload it pushed.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data && e.data.text() }; }
+  const title = data.title || 'kremote';
+  const opts = {
+    body: data.body || '',
+    tag: data.tag || 'kremote',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: { url: '/' },
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
+      for (const c of cs) {
+        if ('focus' in c) return c.focus();
+      }
+      return self.clients.openWindow(target);
+    }),
   );
 });

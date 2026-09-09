@@ -23,16 +23,33 @@ export class TailError extends Error {}
 
 export class TailManager {
   private seq = 0;
-  private watches = new Map<string, { path: string; abs: string; offset: number; fh: Awaited<ReturnType<typeof fsopen>> | null; watcher: FSWatcher; dead: boolean }>();
+  private watches = new Map<string, { path: string; abs: string; offset: number; fh: Awaited<ReturnType<typeof fsopen>> | null; watcher: FSWatcher; dead: boolean; notify: RegExp | null }>();
 
   private readonly root: string;
   private readonly onChunk: (watchId: string, chunk: string) => void;
   private readonly onDead: (watchId: string, reason: string) => void;
+  private readonly onMatch: (watchId: string, path: string, line: string) => void;
 
-  constructor(root: string, onChunk: (watchId: string, chunk: string) => void, onDead: (watchId: string, reason: string) => void) {
+  constructor(
+    root: string,
+    onChunk: (watchId: string, chunk: string) => void,
+    onDead: (watchId: string, reason: string) => void,
+    onMatch: (watchId: string, path: string, line: string) => void = () => {},
+  ) {
     this.root = root;
     this.onChunk = onChunk;
     this.onDead = onDead;
+    this.onMatch = onMatch;
+  }
+
+  /** Set (or clear) the server-side alert regex for a live watch. Returns false
+   *  if the watch is unknown, or the pattern is an invalid regex. */
+  setNotify(watchId: string, pattern?: string): boolean {
+    const e = this.watches.get(watchId);
+    if (!e) return false;
+    if (!pattern) { e.notify = null; return true; }
+    try { e.notify = new RegExp(pattern, 'i'); return true; }
+    catch { e.notify = null; return false; }
   }
 
   get size(): number { return this.watches.size; }
@@ -54,7 +71,7 @@ export class TailManager {
     }
 
     const watchId = `tw${++this.seq}_${Date.now().toString(36)}`;
-    const entry = { path: relPath, abs, offset, fh: null as Awaited<ReturnType<typeof fsopen>> | null, watcher: null as unknown as FSWatcher, dead: false };
+    const entry = { path: relPath, abs, offset, fh: null as Awaited<ReturnType<typeof fsopen>> | null, watcher: null as unknown as FSWatcher, dead: false, notify: null as RegExp | null };
     this.watches.set(watchId, entry);
 
     entry.watcher = watch(abs, { persistent: false }, () => {
@@ -109,7 +126,15 @@ export class TailManager {
       const { bytesRead } = await e.fh.read(buf, 0, len, e.offset);
       if (bytesRead > 0) {
         e.offset += bytesRead;
-        this.onChunk(watchId, buf.subarray(0, bytesRead).toString('utf8'));
+        const chunk = buf.subarray(0, bytesRead).toString('utf8');
+        this.onChunk(watchId, chunk);
+        // Server-side alert: notify on the first matching line per chunk, so a
+        // burst of matches is one push, not a flood.
+        if (e.notify) {
+          for (const line of chunk.split('\n')) {
+            if (e.notify.test(line)) { this.onMatch(watchId, e.path, line); break; }
+          }
+        }
       }
     } catch (err: any) {
       this.drop(watchId, err?.message ?? 'read failed');

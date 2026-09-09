@@ -160,6 +160,32 @@ export interface TailData { type: 'tail.data'; watchId: string; chunk: string }
 
 export interface TailUnwatchReq { type: 'tail.unwatch'; watchId: string }
 
+// Set (or clear) a server-side alert regex on a live watch. When set, the agent
+// tests each new line and, on the first match per chunk, sends a Web Push to the
+// device's registered subscriptions — so alerts arrive even with the app closed.
+// Empty/omitted `pattern` clears the alert. Case-insensitive, like the in-app one.
+export interface TailNotifyReq { type: 'tail.notify'; watchId: string; pattern?: string }
+
+// ── Web Push (agent is the push sender) ───────────────────────────────────
+// The agent holds the VAPID keypair (in its config) and the browser's push
+// subscriptions, and posts notifications directly to the push service. The relay
+// only forwards these frames — it never sees the keys.
+
+// Browser asks the agent for its VAPID public key so it can subscribe.
+export interface PushConfigReq { type: 'push.config'; id: string }
+export interface PushConfigRes { type: 'push.config.res'; id: string; ok: boolean; vapidPublicKey?: string; error?: string }
+
+// A PushSubscription (its JSON form) the browser hands the agent to store.
+export interface PushSub {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+export interface PushSubscribeReq { type: 'push.subscribe'; id: string; sub: PushSub }
+export interface PushSubscribeRes { type: 'push.subscribe.res'; id: string; ok: boolean; error?: string }
+
+// Fire-and-forget: drop a subscription (browser turned notifications off).
+export interface PushUnsubscribeReq { type: 'push.unsubscribe'; endpoint: string }
+
 // ── Limits (guardrails, not features) ────────────────────────────────────
 export const MAX_WRITE_BYTES = 100 * 1024;         // 100 KB per fs.write
 export const MAX_READ_BYTES = 10 * 1024 * 1024;    // 10 MB per fs.read
@@ -174,7 +200,8 @@ export type ClientToAgent =
   | TermInput | TermResize
   | FsListReq | FsReadReq | FsWriteReq | FsMkdirReq | FsRenameReq | FsDeleteReq
   | GitStatusReq | GitDiffReq | GitCommitReq | GitPushReq | GitLogReq
-  | TailWatchReq | TailUnwatchReq;
+  | TailWatchReq | TailUnwatchReq | TailNotifyReq
+  | PushConfigReq | PushSubscribeReq | PushUnsubscribeReq;
 
 export type AgentToClient =
   | TermOpenRes | TermOpenErr | TermCloseRes | TermListRes | TermAttachRes | TermAttachErr
@@ -183,7 +210,8 @@ export type AgentToClient =
   | FsMkdirRes | FsRenameRes | FsDeleteRes
   | GitStatusRes | GitStatusErr | GitDiffRes | GitDiffErr
   | GitCommitRes | GitPushRes | GitLogRes | GitLogErr
-  | TailWatchRes | TailWatchErr | TailData;
+  | TailWatchRes | TailWatchErr | TailData
+  | PushConfigRes | PushSubscribeRes;
 
 export type AnyFrame =
   | ClientToAgent | AgentToClient

@@ -3,6 +3,7 @@ import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon } from '@xterm/addon-search';
 import {
   connect, isConnected, send, rpc, onFrame, type Credential,
 } from './conn';
@@ -16,7 +17,9 @@ import {
   showFinishedNotification, notificationsSupported,
 } from './notify';
 import { readSettings, writeSettings, TERM_THEMES, type TermSettings } from './settings';
-import { addHistory, searchHistory, clearHistory } from './history';
+import {
+  addHistory, searchHistory, clearHistory, readPins, togglePin, isPinned,
+} from './history';
 import {
   biolockSupported, biolockEnabled, enableBiolock, disableBiolock, unlockSession,
 } from './biolock';
@@ -30,6 +33,7 @@ interface Tab {
   name: string;
   term: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
   host: HTMLElement;
   tabEl: HTMLElement;
   labelEl: HTMLElement;   // the tab's text label (tracks the running program)
@@ -323,6 +327,8 @@ function createTab(initialLabel: string): Tab {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
+  const search = new SearchAddon();
+  term.loadAddon(search);
 
   // Window chrome: a macOS-style frame (traffic lights · title · live badge)
   // wrapping the xterm screen — matches the docs/images reference.
@@ -348,6 +354,8 @@ function createTab(initialLabel: string): Tab {
   host.appendChild(win);
   terminalsEl.appendChild(host);
   term.open(screen);
+  // Tag the xterm root so the light-theme chrome rule applies to new tabs too.
+  term.element?.classList.toggle('xterm-light', termSettings.theme === 'light');
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
@@ -360,7 +368,7 @@ function createTab(initialLabel: string): Tab {
   tabsEl.appendChild(tabEl);
 
   const tab: Tab = {
-    termId: '', name: label.textContent!, term, fit, host, tabEl,
+    termId: '', name: label.textContent!, term, fit, search, host, tabEl,
     labelEl: label, titleEl: title, badgeEl: badge,
     shellName: 'shell', cwd: '', program: '', dead: false,
     watch: new CommandWatch(() => onCommandDone(tab)),
@@ -553,28 +561,54 @@ function closeTab(tab: Tab, skipServer = false): void {
 
 newTabBtn.addEventListener('click', () => void newTab());
 
-// ── Command-finished notifications (bell) ──────────────────────────────
-// Hidden entirely when Notification is unsupported (e.g. insecure context —
-// the app must be served over HTTPS for SW/notifications anyway).
-const notifyBell = $('notify-bell');
+// ── ••• overflow menu ──────────────────────────────────────────────────
+// Consolidates the secondary header actions (history, search, notifications,
+// settings) so the bar stays uncluttered — especially on mobile.
+const moreBtn = $('more-btn');
+const moreMenu = $('more-menu');
+const moreNotify = $('more-notify');
+
+function closeMoreMenu(): void { moreMenu.hidden = true; }
+
+moreBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  moreMenu.hidden = !moreMenu.hidden;
+});
+document.addEventListener('click', (e) => {
+  if (!moreMenu.hidden && !moreMenu.contains(e.target as Node) && e.target !== moreBtn) {
+    closeMoreMenu();
+  }
+});
+moreMenu.addEventListener('click', (e) => {
+  e.stopPropagation(); // opening a surface here must not trip its own outside-close
+  const item = (e.target as HTMLElement).closest('.more-item') as HTMLElement | null;
+  if (!item || item.hasAttribute('disabled')) return;
+  closeMoreMenu();
+  switch (item.dataset.act) {
+    case 'history': openHistory(); break;
+    case 'search': openTermSearch(); break;
+    case 'settings': openSettings(); break;
+    case 'notify': toggleNotify(); break;
+  }
+});
+
+// ── Command-finished notifications (in the ••• menu) ────────────────────
+// Unsupported when Notification is missing (e.g. insecure context — the app is
+// served over HTTPS for SW/notifications anyway); the item then reads N/A.
+function paintNotify(on: boolean): void {
+  moreNotify.classList.toggle('on', on);
+  moreNotify.textContent = on ? '🔔  Notifications: On' : '🔕  Notifications: Off';
+}
+function toggleNotify(): void {
+  if (!notificationsSupported()) return;
+  if (readPref()) { disableNotifications(); paintNotify(false); return; }
+  void enableNotifications().then((ok) => paintNotify(ok));
+}
 if (notificationsSupported()) {
-  notifyBell.hidden = false;
-  const paintBell = (on: boolean) => {
-    notifyBell.classList.toggle('on', on);
-    notifyBell.textContent = on ? '🔔' : '🔕';
-    notifyBell.title = on
-      ? 'Command-finished notifications ON — click to turn off'
-      : 'Command-finished notifications OFF — click to turn on';
-  };
-  paintBell(readPref());
-  notifyBell.addEventListener('click', () => {
-    if (readPref()) {
-      disableNotifications();
-      paintBell(false);
-      return;
-    }
-    void enableNotifications().then((ok) => paintBell(ok));
-  });
+  paintNotify(readPref());
+} else {
+  moreNotify.textContent = '🔕  Notifications: N/A';
+  moreNotify.setAttribute('disabled', '');
 }
 
 window.addEventListener('resize', () => { if (active) fitSoon(active); });
@@ -644,6 +678,14 @@ const mobileKeys = document.getElementById('mobile-keys')!;
 mobileKeys.addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button');
   if (!btn || btn.id === 'composer-toggle') return; // composer handles itself
+
+  // Actions (#4 paste/copy, #6 search) work off the active tab's buffer, so
+  // they run even for a dead tab (search) — handle them before the live guard.
+  const act = btn.getAttribute('data-act');
+  if (act === 'search') { openTermSearch(); return; }
+  if (act === 'copy') { copyActiveSelection(btn); return; }
+  if (act === 'paste') { void pasteIntoActive(); return; }
+
   if (!active || active.dead) return;
 
   const seq = btn.getAttribute('data-seq');
@@ -659,10 +701,67 @@ mobileKeys.addEventListener('click', (e) => {
   }
 });
 
+// #4 Paste: clipboard → active pty. #4 Copy: terminal selection → clipboard.
+// The app is served over HTTPS, so the async Clipboard API is available.
+async function pasteIntoActive(): Promise<void> {
+  if (!active || active.dead || !active.termId) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) sendInput(active, text);
+  } catch { /* permission denied / no clipboard — ignore */ }
+}
+
+function copyActiveSelection(btn: HTMLElement): void {
+  const sel = active?.term.getSelection();
+  if (!sel) return;
+  navigator.clipboard.writeText(sel)
+    .then(() => {
+      btn.classList.add('stuck');            // brief flash = "copied"
+      setTimeout(() => btn.classList.remove('stuck'), 450);
+    })
+    .catch(() => { /* ignore */ });
+}
+
 function unescapeSeq(s: string): string {
   return s.replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
           .replace(/\\t/g, '\t');
 }
+
+// ── Scrollback search (#6) ──────────────────────────────────────────────
+// A floating bar over the terminal window, driven by xterm's SearchAddon on
+// the *active* tab. Typing jumps to the next match; ↑/↓ (or Shift+Enter/Enter)
+// cycle; Esc/✕ closes and returns focus to the terminal.
+const termSearch = $('term-search');
+const termSearchInput = $('term-search-input') as HTMLInputElement;
+
+function openTermSearch(): void {
+  switchView('terminals');
+  termSearch.hidden = false;
+  termSearchInput.focus();
+  termSearchInput.select();
+  if (termSearchInput.value) runSearch('next');
+}
+
+function closeTermSearch(): void {
+  termSearch.hidden = true;
+  active?.term.focus();
+}
+
+function runSearch(dir: 'next' | 'prev'): void {
+  const q = termSearchInput.value;
+  if (!active || !q) return;
+  if (dir === 'next') active.search.findNext(q);
+  else active.search.findPrevious(q);
+}
+
+termSearchInput.addEventListener('input', () => runSearch('next'));
+termSearchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); runSearch(e.shiftKey ? 'prev' : 'next'); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeTermSearch(); }
+});
+$('term-search-next').addEventListener('click', () => runSearch('next'));
+$('term-search-prev').addEventListener('click', () => runSearch('prev'));
+$('term-search-close').addEventListener('click', closeTermSearch);
 
 document.addEventListener('keydown', (e) => {
   if (!active || heldModifiers.size === 0) return;
@@ -690,14 +789,21 @@ let termSettings: TermSettings = readSettings();
 applySettingsToTabs();
 
 function applySettingsToTabs(): void {
+  const light = termSettings.theme === 'light';
   for (const t of tabs) {
     t.term.options.fontSize = termSettings.fontSize;
     (t.term.options as any).theme = { ...TERM_THEMES[termSettings.theme] };
-    fitSoon(t);
+    // Softens the window chrome (titlebar) around a light terminal — see the
+    // `.term-window:has(.xterm-light)` rule in style.css.
+    t.term.element?.classList.toggle('xterm-light', light);
   }
+  // Only the active tab is visible; xterm can't measure a display:none host, so
+  // fitting hidden tabs is both wrong and pointless (they refit on activate()).
+  // Looping fitSoon() over every tab would also clobber its shared timer and
+  // leave the active tab unfitted after a font change.
+  if (active) fitSoon(active);
 }
 
-const settingsBtn = $('settings-btn');
 const settingsPop = $('settings-pop');
 const fontLabel = $('set-font');
 const biolockToggle = $('biolock-toggle');
@@ -716,13 +822,12 @@ function paintSettings(): void {
     : 'Not supported in this browser.';
 }
 
-settingsBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  settingsPop.hidden = !settingsPop.hidden;
+function openSettings(): void {
+  settingsPop.hidden = false;
   paintSettings();
-});
+}
 document.addEventListener('click', (e) => {
-  if (!settingsPop.hidden && !settingsPop.contains(e.target as Node) && e.target !== settingsBtn) {
+  if (!settingsPop.hidden && !settingsPop.contains(e.target as Node)) {
     settingsPop.hidden = true;
   }
 });
@@ -754,47 +859,71 @@ biolockToggle.addEventListener('click', () => {
   });
 });
 
-// ── Command history drawer (#6) ─────────────────────────────────────────
-const historyBtn = $('history-btn');
+// ── Command history + pinned snippets drawer (#5/#6) ────────────────────
 const historyDrawer = $('history-drawer');
 const historySearch = $('history-search') as HTMLInputElement;
+const historyPinned = $('history-pinned');
 const historyList = $('history-list');
 
+// A history/snippet row: a ★ pin toggle + the command (tap to send).
+function makeHistoryRow(line: string): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'history-row';
+
+  const pin = document.createElement('button');
+  pin.className = 'history-pin';
+  const pinned = isPinned(line);
+  pin.classList.toggle('on', pinned);
+  pin.textContent = pinned ? '★' : '☆';
+  pin.title = pinned ? 'Unpin' : 'Pin as snippet';
+  pin.setAttribute('aria-label', pin.title);
+  pin.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePin(line);
+    renderHistory();
+  });
+
+  const send = document.createElement('button');
+  send.className = 'history-item';
+  send.textContent = line;
+  send.title = 'Tap to send to the active terminal';
+  send.addEventListener('click', () => {
+    if (active && !active.dead && active.termId) {
+      switchView('terminals');
+      sendInput(active, line + '\r');
+    }
+    historyDrawer.hidden = true;
+  });
+
+  row.append(pin, send);
+  return row;
+}
+
 function renderHistory(): void {
+  // Pinned snippets: always shown, independent of the search box.
+  historyPinned.innerHTML = '';
+  const pins = readPins();
+  historyPinned.hidden = pins.length === 0;
+  for (const line of pins) historyPinned.appendChild(makeHistoryRow(line));
+
   historyList.innerHTML = '';
   const items = searchHistory(historySearch.value).slice(0, 100);
   if (items.length === 0) {
     const el = document.createElement('div');
     el.className = 'history-empty';
-    el.textContent = 'No commands yet';
+    el.textContent = pins.length ? 'No matching commands' : 'No commands yet';
     historyList.appendChild(el);
     return;
   }
-  for (const line of items) {
-    const el = document.createElement('button');
-    el.className = 'history-item';
-    el.textContent = line;
-    el.title = 'Tap to send to the active terminal';
-    el.addEventListener('click', () => {
-      if (active && !active.dead && active.termId) {
-        switchView('terminals');
-        sendInput(active, line + '\r');
-      }
-      historyDrawer.hidden = true;
-    });
-    historyList.appendChild(el);
-  }
+  for (const line of items) historyList.appendChild(makeHistoryRow(line));
 }
 
-historyBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  historyDrawer.hidden = !historyDrawer.hidden;
-  if (!historyDrawer.hidden) {
-    historySearch.value = '';
-    renderHistory();
-    historySearch.focus();
-  }
-});
+function openHistory(): void {
+  historyDrawer.hidden = false;
+  historySearch.value = '';
+  renderHistory();
+  historySearch.focus();
+}
 historyDrawer.addEventListener('click', (e) => {
   if (e.target === historyDrawer) historyDrawer.hidden = true;
 });

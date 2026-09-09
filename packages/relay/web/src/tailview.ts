@@ -5,6 +5,7 @@
 
 import { onFrame, rpc, send } from './conn';
 import { showFinishedNotification } from './notify';
+import { enablePush } from './push';
 
 export interface TailOpts {
   onOpenTail?: (path: string) => void;
@@ -63,7 +64,11 @@ export class TailView {
     pat.className = 'tail-pattern';
     pat.placeholder = 'Notify on lines matching… (e.g. ERROR)';
     pat.spellcheck = false;
-    pat.addEventListener('input', () => { this.pattern = pat.value; });
+    pat.addEventListener('input', () => {
+      this.pattern = pat.value;
+      // Keep the server-side alert regex in step while notifications are on.
+      if (this.notifyEnabled) this.syncNotify();
+    });
     this.patternInput = pat;
     const patBtn = document.createElement('button');
     patBtn.className = 'tail-notify-btn';
@@ -72,6 +77,9 @@ export class TailView {
     patBtn.addEventListener('click', () => {
       this.notifyEnabled = !this.notifyEnabled;
       patBtn.classList.toggle('on', this.notifyEnabled);
+      // Turning on also asks for OS push so alerts arrive with the app closed.
+      if (this.notifyEnabled) void enablePush();
+      this.syncNotify();
     });
     prow.append(pat, patBtn);
     this.host.appendChild(prow);
@@ -116,6 +124,7 @@ export class TailView {
       if (res.ok && res.watchId) {
         this.watchId = res.watchId;
         this.setStatus(`following ${path}`);
+        if (this.notifyEnabled) this.syncNotify(); // re-arm alerts on the new watch
       } else {
         this.setStatus(res.error ?? 'failed to follow', true);
       }
@@ -158,6 +167,14 @@ export class TailView {
         }
       }
     }
+  }
+
+  /** Push the current alert regex to the agent so it can notify with the app
+   *  closed (empty pattern / notifications off = clear the server-side alert). */
+  private syncNotify(): void {
+    if (!this.watchId) return;
+    const pattern = this.notifyEnabled ? this.pattern.trim() : '';
+    send({ type: 'tail.notify', watchId: this.watchId, pattern: pattern || undefined });
   }
 
   private safeRegex(p: string): RegExp | null {

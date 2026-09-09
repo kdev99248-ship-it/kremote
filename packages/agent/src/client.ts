@@ -5,6 +5,7 @@ import { TermManager, DEFAULT_SHELL } from './term.ts';
 import { FsError, FsHandlers } from './fs.ts';
 import { GitRunner } from './git.ts';
 import { TailManager, TailError } from './tail.ts';
+import { PushSender } from './push.ts';
 import { saveConfig } from './config.ts';
 import type { AgentConfig } from './config.ts';
 
@@ -20,6 +21,7 @@ export class AgentClient {
   private readonly fs: FsHandlers;
   private readonly git: GitRunner;
   private readonly tails: TailManager;
+  private readonly push: PushSender;
   private pendingAccessKey = new Map<string, (r: { key: string; url: string; expiresMs: number }) => void>();
   private accessKeySeq = 0;
   private readonly cfg: AgentConfig;
@@ -34,10 +36,14 @@ export class AgentClient {
     this.git = new GitRunner(this.fs, cfg.gitCredentials);
     this.terms.on('data', (termId, data) => this.send({ type: 'term.data', termId, data } as AnyFrame));
     this.terms.on('exit', (termId, code) => this.send({ type: 'term.exit', termId, code } as AnyFrame));
+    this.push = new PushSender(cfg);
     this.tails = new TailManager(
       cfg.root ?? process.cwd(),
       (watchId, chunk) => this.send({ type: 'tail.data', watchId, chunk } as AnyFrame),
       (watchId, reason) => this.send({ type: 'tail.data', watchId, chunk: `\n[tail ended: ${reason}]\n` } as AnyFrame),
+      (_watchId, path, line) => void this.push.send({
+        title: `tail: ${path}`, body: line.slice(0, 160), tag: 'kremote-tail',
+      }).catch(() => { /* push failure is non-fatal */ }),
     );
   }
 
@@ -218,6 +224,41 @@ export class AgentClient {
       case 'tail.unwatch': {
         const f = frame as any;
         this.tails.unwatch(f.watchId);
+        return;
+      }
+
+      case 'tail.notify': {
+        const f = frame as any;
+        this.tails.setNotify(f.watchId, f.pattern);
+        return;
+      }
+
+      // ── Web Push (agent is the sender) ─────────────────────────────────
+      case 'push.config': {
+        const f = frame as any;
+        try {
+          const vapidPublicKey = await this.push.ensureVapid();
+          this.send({ type: 'push.config.res', id: f.id, ok: true, vapidPublicKey } as AnyFrame);
+        } catch (e: any) {
+          this.send({ type: 'push.config.res', id: f.id, ok: false, error: e?.message ?? 'vapid failed' } as AnyFrame);
+        }
+        return;
+      }
+
+      case 'push.subscribe': {
+        const f = frame as any;
+        try {
+          await this.push.add(f.sub);
+          this.send({ type: 'push.subscribe.res', id: f.id, ok: true } as AnyFrame);
+        } catch (e: any) {
+          this.send({ type: 'push.subscribe.res', id: f.id, ok: false, error: e?.message ?? 'subscribe failed' } as AnyFrame);
+        }
+        return;
+      }
+
+      case 'push.unsubscribe': {
+        const f = frame as any;
+        void this.push.remove(f.endpoint);
         return;
       }
 

@@ -197,10 +197,6 @@ button, input, textarea { font-family: var(--font-ui); }
   background: var(--faint);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, .04);
 }
-#notify-bell { background: transparent; color: var(--faint);
-  border: none; border-radius: var(--r-ctl); width: 30px; height: 30px;
-  font-size: 15px; line-height: 1; cursor: pointer; flex: none; }
-#notify-bell.on { color: var(--accent); }
 #conn-state.on { background: var(--ok); box-shadow: 0 0 8px rgba(34, 197, 94, .65); }
 #conn-state.off { background: var(--danger); box-shadow: 0 0 8px rgba(255, 95, 87, .55); }
 
@@ -766,11 +762,24 @@ button, input, textarea { font-family: var(--font-ui); }
   #editor { transform: none !important; }
 }
 
-/* ── Header extra buttons (history ⌘, settings ⚙) ─────────────────────── */
-#history-btn, #settings-btn { background: transparent; color: var(--muted);
+/* ── Header ••• overflow menu ─────────────────────────────────────────── */
+#more-btn { background: transparent; color: var(--muted);
   border: 1px solid var(--border); border-radius: var(--r-ctl);
-  width: 30px; height: 30px; font-size: 14px; cursor: pointer; flex: none; }
-#history-btn:hover, #settings-btn:hover { color: var(--accent); border-color: var(--accent-line); }
+  height: 30px; min-width: 34px; padding: 0 8px; line-height: 1;
+  font-size: 14px; letter-spacing: 1px; cursor: pointer; flex: none; }
+#more-btn:hover { color: var(--accent); border-color: var(--accent-line); }
+#more-menu { position: fixed; top: 56px; right: 12px; z-index: 65;
+  width: min(248px, calc(100vw - 24px));
+  background: var(--panel); border: 1px solid var(--border-2);
+  border-radius: var(--r-card); box-shadow: var(--shadow-card);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.more-item { display: flex; align-items: center; text-align: left;
+  background: transparent; color: var(--fg-2);
+  border: 0; border-radius: var(--r-ctl); padding: 11px 12px;
+  font-size: 13px; font-weight: 500; cursor: pointer; }
+.more-item:hover, .more-item:active { background: var(--hover); color: var(--fg); }
+.more-item.on { color: var(--accent); }
+.more-item[disabled] { color: var(--faint); cursor: default; }
 
 /* ── Settings popover ─────────────────────────────────────────────────── */
 #settings-pop { position: fixed; top: 56px; right: 12px; z-index: 60;
@@ -810,6 +819,19 @@ button, input, textarea { font-family: var(--font-ui); }
 #history-search:focus { border-color: var(--accent-line); }
 #history-list { flex: 1; overflow-y: auto; padding: 0 16px 24px;
   display: flex; flex-direction: column; gap: 6px; }
+/* Pinned snippets sit above the searchable history, visually fenced off. */
+#history-pinned { flex: none; padding: 0 16px 10px; margin-bottom: 4px;
+  display: flex; flex-direction: column; gap: 6px; }
+#history-pinned:not([hidden]) { border-bottom: 1px solid var(--border);
+  padding-bottom: 12px; }
+.history-row { display: flex; align-items: stretch; gap: 6px; }
+.history-row .history-item { flex: 1; min-width: 0; }
+.history-pin { flex: none; width: 40px; background: var(--panel);
+  color: var(--faint); border: 1px solid var(--border);
+  border-radius: var(--r-ctl); font-size: 15px; line-height: 1; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.history-pin.on { color: var(--accent); border-color: var(--accent-line);
+  background: var(--accent-dim); }
 .history-item { text-align: left; background: var(--panel); color: var(--fg-2);
   border: 1px solid var(--border); border-radius: var(--r-ctl);
   padding: 10px 12px; font-family: var(--font-mono); font-size: 12.5px;

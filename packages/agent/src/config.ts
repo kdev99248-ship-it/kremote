@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import type { PushSub } from '@kremote/shared';
 
 export interface AgentConfig {
   relayUrl: string;        // wss://host/ws
@@ -16,6 +17,11 @@ export interface AgentConfig {
   /** HTTPS push credentials (PAT). Optional — SSH remotes use the OS ssh key
    * instead. `token` is required; `username` defaults to `x-access-token`. */
   gitCredentials?: { username?: string; token: string };
+  /** Web Push (tail alerts). The agent is the push sender: it generates a VAPID
+   * keypair on first use and stores browser push subscriptions here. Both are
+   * created/updated at runtime and saved back via saveConfig(). */
+  vapid?: { publicKey: string; privateKey: string };
+  pushSubs?: PushSub[];
 }
 
 export function configPath(): string {
