@@ -7,4 +7,5 @@ packages/relay/public/
 *.log
 *.tsbuildinfo
 .env
+deploy/deploy.env
 .kremote/

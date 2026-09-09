@@ -10,6 +10,10 @@
 #   VPS=root@1.2.3.4 APP_DIR=/opt/kremote BRANCH=feat/terminal-mvp bash deploy/deploy.sh
 set -euo pipefail
 
+# Load deploy.env (next to this script) if present — command-line vars still win.
+_SD="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$_SD/deploy.env" ] && . "$_SD/deploy.env"
+
 VPS="${VPS:?set VPS=user@host}"
 APP_DIR="${APP_DIR:-/opt/kremote}"
 BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"

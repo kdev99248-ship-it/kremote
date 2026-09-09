@@ -8,6 +8,10 @@
 #   sudo bash /opt/kremote/deploy/update.sh   (needs root to restart the service)
 set -euo pipefail
 
+# Load deploy.env (next to this script) if present — command-line vars still win.
+_SD="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$_SD/deploy.env" ] && . "$_SD/deploy.env"
+
 APP_DIR="${APP_DIR:-/opt/kremote}"
 BRANCH="${BRANCH:-feat/terminal-mvp}"
 SVC_USER="${SVC_USER:-kremote}"

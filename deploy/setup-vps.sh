@@ -13,6 +13,10 @@
 # After this, update anytime with deploy/update.sh (on the VPS) — git pull + rebuild.
 set -euo pipefail
 
+# Load deploy.env (next to this script) if present — command-line vars still win.
+_SD="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$_SD/deploy.env" ] && . "$_SD/deploy.env"
+
 DOMAIN="${DOMAIN:?set DOMAIN=your.host}"
 EMAIL="${EMAIL:?set EMAIL=you@example.com for the ACME account}"
 REPO="${REPO:-https://github.com/kdev99248-ship-it/kremote.git}"

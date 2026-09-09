@@ -32,6 +32,13 @@ This installs Node 24 + git + certbot, creates the `kremote` service user,
 issues the TLS cert, installs a renewal hook (certs land in `/etc/kremote/tls/`,
 which the relay watches), installs + starts the `kremote-relay` systemd unit.
 
+> **Tip — put your settings in a file instead of typing them each time.**
+> `cp deploy/deploy.env.example deploy/deploy.env`, edit `DOMAIN`/`EMAIL`/`VPS`,
+> and all three scripts (`setup-vps.sh`, `update.sh`, `deploy.sh`) pick them up
+> automatically. Anything passed on the command line still overrides the file.
+> (`deploy.env` is gitignored.) With it filled in, provisioning is just:
+> `sudo bash deploy/setup-vps.sh`.
+
 ## 2. Register your Windows device (once)
 
 On the VPS:
