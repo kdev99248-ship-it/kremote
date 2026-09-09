@@ -282,3 +282,89 @@ test("reject() emits 'rejected' with peer id + reason (audit hook)", async () =>
     assert.equal(events[0].reason, 'invalid or expired access key');
   } finally { await cleanup(dir); }
 });
+
+// ── Zero-touch enrollment ──────────────────────────────────────────────────
+
+function connectEnrollingAgent(relay: Relay, id = 'agent-new', label = 'my-win'): FakePeer {
+  const peer = new FakePeer(id);
+  relay.handleHello(peer, encode({ type: 'hello.agent', register: true, label, protocol: PROTOCOL_VERSION }));
+  return peer;
+}
+
+/** Enrollment responds after the store flush (async) — wait for a frame. */
+async function waitFrame(peer: FakePeer, timeoutMs = 2000): Promise<AnyFrame> {
+  const start = Date.now();
+  while (peer.sent.length === 0) {
+    if (Date.now() - start > timeoutMs) throw new Error('no response from relay (timeout)');
+    await new Promise(r => setTimeout(r, 10));
+  }
+  return peer.last();
+}
+
+test('zero-touch: fresh agent registers, gets a one-time DEVICE_KEY, then pairs', async () => {
+  const dir = await mkTmp();
+  try {
+    // Fresh relay with an empty store (cap default 1).
+    const fresh = new Relay(await Store.load(join(dir, 'store.json')), {});
+    const events: string[] = [];
+    fresh.on('agent-registered', (d: string) => events.push(d));
+
+    const agent = connectEnrollingAgent(fresh, 'agent-fresh', 'my-windows');
+    const res = await waitFrame(agent) as { type: string; ok: boolean; deviceKey?: string; deviceId?: string };
+    assert.equal(res.ok, true);
+    assert.equal(typeof res.deviceKey, 'string');
+    assert.ok(res.deviceKey!.length >= 16);
+    assert.equal(events.length, 1);
+
+    // The minted key must authenticate a normal hello afterwards.
+    const again = connectAgent(fresh, res.deviceKey!, 'agent-again');
+    assert.deepEqual(again.last(), { type: 'hello.res', ok: true });
+  } finally { await cleanup(dir); }
+});
+
+test('zero-touch: registration closes once the device cap is reached', async () => {
+  const dir = await mkTmp();
+  try {
+    // Fresh store, cap 1.
+    const store = await Store.load(join(dir, 'store.json'));
+    const relay = new Relay(store, { maxDevices: 1 });
+
+    // First agent wins the slot.
+    const first = connectEnrollingAgent(relay, 'agent-first', 'owner');
+    const res = await waitFrame(first) as { ok: boolean; deviceKey?: string };
+    assert.equal(res.ok, true);
+    assert.ok(res.deviceKey);
+
+    // Second enrollment attempt is refused.
+    const second = connectEnrollingAgent(relay, 'agent-second', 'intruder');
+    assert.deepEqual(second.last(), { type: 'hello.res', ok: false, error: 'device registration closed' });
+    assert.ok(second.closed);
+
+    // And the refusal reason is auditable (not a credential guess).
+    const events: string[] = [];
+    relay.on('rejected', (_id: string, reason: string) => events.push(reason));
+    connectEnrollingAgent(relay, 'agent-third', 'again');
+    assert.deepEqual(events, ['device registration closed']);
+  } finally { await cleanup(dir); }
+});
+
+test('zero-touch: relay restart re-loads the cap from the store (no re-enroll)', async () => {
+  const dir = await mkTmp();
+  try {
+    const path = join(dir, 'store.json');
+    const store1 = await Store.load(path);
+    const relay1 = new Relay(store1, { maxDevices: 1 });
+    const first = connectEnrollingAgent(relay1, 'agent-a', 'owner');
+    const key = (await waitFrame(first) as { deviceKey?: string }).deviceKey;
+    assert.ok(key);
+
+    // "Restart": fresh Relay over the same store file.
+    const store2 = await Store.load(path);
+    const relay2 = new Relay(store2, { maxDevices: 1 });
+    const later = connectEnrollingAgent(relay2, 'agent-b', 'stranger');
+    assert.deepEqual(later.last(), { type: 'hello.res', ok: false, error: 'device registration closed' });
+    // …but the original key still authenticates.
+    const ok = connectAgent(relay2, key!, 'agent-a2');
+    assert.deepEqual(ok.last(), { type: 'hello.res', ok: true });
+  } finally { await cleanup(dir); }
+});

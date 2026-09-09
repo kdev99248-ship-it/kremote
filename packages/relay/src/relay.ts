@@ -21,6 +21,7 @@ export interface RelayConfig {
   sessionTtlMs?: number;     // default 12 h
   idleTimeoutMs?: number;    // default 30 min no frames
   maxSessionsPerDevice?: number; // default 4
+  maxDevices?: number;       // zero-touch enrollment cap; default 1
 }
 
 const DEFAULTS: Required<RelayConfig> = {
@@ -28,6 +29,7 @@ const DEFAULTS: Required<RelayConfig> = {
   sessionTtlMs: 12 * 3_600_000,
   idleTimeoutMs: 30 * 60_000,
   maxSessionsPerDevice: 4,
+  maxDevices: 1,
 };
 
 interface AccessKeyEntry { keyHash: string; deviceId: string; expiresAt: number; used: boolean }
@@ -66,7 +68,38 @@ export class Relay extends EventEmitter {
 
     if (frame.type === 'hello.agent') {
       if (frame.protocol !== PROTOCOL_VERSION) return this.reject(peer, 'protocol mismatch');
-      const hash = deviceKeyHash(frame.deviceKey);
+
+      // ── Zero-touch enrollment ────────────────────────────────────────────
+      // A fresh agent with no DEVICE_KEY asks the relay to mint one. Allowed
+      // only while the relay is under maxDevices (default 1): a personal
+      // relay's first agent wins the slot, then the door closes — a stranger
+      // connecting before the real agent would otherwise steal the device
+      // identity, so keep the window as tight as the setup allows.
+      if (!frame.deviceKey && frame.register) {
+        const cap = process.env.KREMOTE_MAX_DEVICES
+          ? Number(process.env.KREMOTE_MAX_DEVICES)
+          : this.cfg.maxDevices ?? 1;
+        if (this.store.devices.length >= cap) {
+          return this.reject(peer, 'device registration closed');
+        }
+        const { device, key } = this.store.addDeviceNow(frame.label ?? 'agent');
+        // Respond only once the store write is durable: if the relay dies right
+        // after enrollment, the device must exist on restart (the door stays
+        // closed and the agent's saved key still authenticates).
+        void this.store.flush().then(
+          () => {
+            this.devices.set(device.deviceId, { peer, deviceId: device.deviceId, lastFrameAt: Date.now() });
+            peer.send(encode({
+              type: 'hello.res', ok: true, deviceKey: key, deviceId: device.deviceId,
+            }));
+            this.emit('agent-registered', device.deviceId, device.name);
+          },
+          () => this.reject(peer, 'enrollment persist failed'),
+        );
+        return;
+      }
+
+      const hash = deviceKeyHash(frame.deviceKey ?? '');
       const device = this.store.deviceByKeyHash(hash);
       if (!device) return this.reject(peer, 'unknown device key');
       if (this.devices.has(device.deviceId)) {

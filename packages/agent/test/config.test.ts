@@ -38,7 +38,8 @@ test('loadConfig reads relayUrl/deviceKey and resolves root', async () => {
 
     // Missing keys are rejected.
     await writeFile(cfgPath, JSON.stringify({ relayUrl: 'ws://x' }), 'utf8');
-    await assert.rejects(() => loadConfig(), /missing deviceKey/);
+    const cfg4 = await loadConfig();
+    assert.equal(cfg4.deviceKey, undefined); // optional: agent will self-enroll
   } finally {
     if (oldOverride === undefined) delete process.env.KREMOTE_AGENT_CONFIG;
     else process.env.KREMOTE_AGENT_CONFIG = oldOverride;

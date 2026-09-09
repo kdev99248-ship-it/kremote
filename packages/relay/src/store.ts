@@ -80,6 +80,21 @@ export class Store {
     return { device, key };
   }
 
+  /** Sync variant used by the relay hello path (must not await): mutates now,
+   * flushes in the background. The next flush rewrites the whole file anyway. */
+  addDeviceNow(name: string): { device: DeviceRecord; key: string } {
+    const key = genDeviceKey();
+    const device: DeviceRecord = {
+      deviceId: `dev_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      keyHash: deviceKeyHash(key),
+      createdAt: new Date().toISOString(),
+    };
+    this.data.devices.push(device);
+    void this.flush();
+    return { device, key };
+  }
+
   touchDevice(deviceId: string): Promise<void> {
     const d = this.data.devices.find(x => x.deviceId === deviceId);
     if (d) d.lastSeenAt = new Date().toISOString();
@@ -117,8 +132,10 @@ export class Store {
     return this.data.sessions.filter(s => s.deviceId === deviceId);
   }
 
-  /** Serialize writes so concurrent mutations can't clobber each other. */
-  private flush(): Promise<void> {
+  /** Serialize writes so concurrent mutations can't clobber each other.
+   * Public because the enrollment path awaits it before handing the agent
+   * its new DEVICE_KEY (the key must survive a relay crash). */
+  flush(): Promise<void> {
     const next = this.writes.then(async () => {
       await mkdir(dirname(this.path), { recursive: true });
       await writeFile(this.path, JSON.stringify(this.data, null, 2), 'utf8');

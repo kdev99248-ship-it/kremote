@@ -4,6 +4,7 @@ import type { AnyFrame, ClientToAgent } from '@kremote/shared';
 import { TermManager, DEFAULT_SHELL } from './term.ts';
 import { FsError, FsHandlers } from './fs.ts';
 import { GitRunner } from './git.ts';
+import { saveConfig } from './config.ts';
 import type { AgentConfig } from './config.ts';
 
 // Dials the relay, stays connected (exponential backoff reconnect), and
@@ -22,6 +23,8 @@ export class AgentClient {
   private readonly cfg: AgentConfig;
   /** Fired each time the relay accepts our hello (i.e. relay is up + authed). */
   onHelloOk: (() => void) | null = null;
+  /** Fired after zero-touch enrollment succeeds and config was saved. */
+  onEnrolled: ((deviceId: string) => void) | null = null;
 
   constructor(cfg: AgentConfig) {
     this.cfg = cfg;
@@ -41,7 +44,16 @@ export class AgentClient {
     ws.on('open', () => {
       this.retry = 0;
       console.log(`[agent] connected to ${this.cfg.relayUrl}`);
-      this.send({ type: 'hello.agent', deviceKey: this.cfg.deviceKey, protocol: PROTOCOL_VERSION } as AnyFrame);
+      if (this.cfg.deviceKey) {
+        this.send({ type: 'hello.agent', deviceKey: this.cfg.deviceKey, protocol: PROTOCOL_VERSION } as AnyFrame);
+      } else {
+        // Zero-touch: no DEVICE_KEY yet → ask the relay to enroll this device.
+        console.log('[agent] no deviceKey in config — requesting enrollment');
+        this.send({
+          type: 'hello.agent', register: true, label: this.cfg.label ?? 'agent',
+          protocol: PROTOCOL_VERSION,
+        } as AnyFrame);
+      }
     });
 
     ws.on('message', (raw) => {
@@ -88,10 +100,31 @@ export class AgentClient {
 
   private async handle(frame: AnyFrame): Promise<void> {
     switch (frame.type) {
-      case 'hello.res':
-        if (!frame.ok) console.error(`[agent] relay rejected hello: ${frame.error}`);
-        else this.onHelloOk?.();
+      case 'hello.res': {
+        if (!frame.ok) {
+          console.error(`[agent] relay rejected hello: ${frame.error}`);
+          return;
+        }
+        // Zero-touch enrollment succeeded: the relay minted a DEVICE_KEY for
+        // this socket. Persist it, update in-memory cfg, then reconnect so the
+        // next hello authenticates as a fully-paired device.
+        if (frame.deviceKey) {
+          this.cfg.deviceKey = frame.deviceKey;
+          try {
+            await saveConfig(this.cfg);
+            console.log('[agent] enrolled — DEVICE_KEY saved to config');
+            this.onEnrolled?.(frame.deviceId ?? '');
+            // Reconnect as a normal device (this socket is unauthenticated).
+            this.ws?.close(1000, 'enrolled');
+          } catch (e: any) {
+            console.error(`[agent] enrollment failed to save config: ${e.message}`);
+            this.ws?.close(1000, 'enroll-save-failed');
+          }
+          return;
+        }
+        this.onHelloOk?.();
         return;
+      }
 
       case 'accesskey.res': {
         const cb = this.pendingAccessKey.get(frame.id);

@@ -38,7 +38,14 @@ export interface TermExit { type: 'term.exit'; termId: string; code: number | nu
 // ── Auth / pairing (relay↔peer control frames) ───────────────────────────
 export interface HelloAgent {
   type: 'hello.agent';
-  deviceKey: string;
+  // Empty deviceKey + register:true = zero-touch enrollment: the relay mints a
+  // DEVICE_KEY and returns it (once) in hello.res{deviceKey}. The agent saves
+  // it to its config and reconnects as a fully-paired device. The enrollment
+  // window is capped by the relay's maxDevices (default 1) so a fresh relay
+  // accepts exactly its owner's first agent, then closes to strangers.
+  deviceKey?: string;
+  register?: boolean;
+  label?: string;
   protocol: number;
 }
 // A browser authenticates with a one-time ACCESS_KEY on first login, or with a
@@ -51,8 +58,17 @@ export interface HelloClient {
   protocol: number;
 }
 // On success the relay returns the durable session token so the browser can
-// persist it and reconnect silently later.
-export interface HelloRes { type: 'hello.res'; ok: boolean; error?: string; session?: string }
+// persist it and reconnect silently later. For a zero-touch agent enrollment
+// (hello.agent{register:true}) it also returns the newly minted DEVICE_KEY —
+// exactly once, only to the registering socket.
+export interface HelloRes {
+  type: 'hello.res';
+  ok: boolean;
+  error?: string;
+  session?: string;
+  deviceKey?: string;
+  deviceId?: string;
+}
 
 // Relay→agent only: mint a one-time ACCESS_KEY for the browser.
 export interface AccessKeyReq { type: 'accesskey.req'; id: string }

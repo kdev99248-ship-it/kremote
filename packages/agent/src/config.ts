@@ -4,7 +4,9 @@ import { homedir } from 'node:os';
 
 export interface AgentConfig {
   relayUrl: string;        // wss://host/ws
-  deviceKey: string;       // plaintext, local only
+  /** Optional: a fresh agent without one enrolls itself with the relay
+   * (zero-touch) and the minted key is saved back into the config file. */
+  deviceKey?: string;
   deviceId?: string;
   defaultShell?: string;
   /** Root that fs.* paths are resolved against. Defaults to homedir(). */
@@ -24,10 +26,12 @@ export function configPath(): string {
 
 export async function loadConfig(): Promise<AgentConfig> {
   const path = configPath();
+  console.log("Agent config path " + path);
   const raw = await readFile(path, 'utf8');
   const cfg = JSON.parse(raw) as AgentConfig;
   if (!cfg.relayUrl) throw new Error(`${path}: missing relayUrl`);
-  if (!cfg.deviceKey) throw new Error(`${path}: missing deviceKey`);
+  // deviceKey is optional: a fresh agent without one enrolls itself with the
+  // relay on first connect (zero-touch) and the key is saved back here.
   // KREMOTE_AGENT_ROOT overrides the config file's root (fs.*/git.* base dir).
   cfg.root = process.env.KREMOTE_AGENT_ROOT ?? cfg.root ?? homedir();
   cfg.root = resolve(cfg.root);
