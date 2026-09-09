@@ -254,3 +254,23 @@ codepage legacy làm hỏng UTF‑8, (3) `cls`/`clear` không xoá scrollback.
 *Cập nhật lúc 2026-09-09 (khuya): siết bảo mật relay — `ConnectionGuard` (cap kết nối/IP + tổng, chống brute‑force ACCESS_KEY, chuẩn hoá IPv6 /64), TLS nhúng trong Node + hot‑reload cert, hello‑deadline, maxPayload, audit log có cấu trúc. Test 58/58, smoke rate‑limit + TLS đạt.*
 
 *Cập nhật lúc 2026-09-09: file ops UI (mkdir/rename/delete + two‑tap confirm + banner) — smoke test browser thật hết các op, phát hiện & vá 2 bug: banner bị wipe bởi render(), overflow ngang 28px trên mobile do `#editor` translateX khi ẩn (`#files { overflow: hidden }`). Test 58/58.*
+
+---
+
+## 📲 PWA — cài lên màn hình chính như app — mới
+
+Mục tiêu: trên mobile, mở kremote như app riêng (icon, fullscreen, không thanh trình duyệt).
+
+- **Manifest** (`web/public/manifest.webmanifest`): standalone, brand colors
+  (`#0c0c0c`/`#040404`), icon 192/512 + maskable.
+- **Icons** vẽ bằng Pillow khớp brand: chevron `>` + block caret màu coral trên nền
+  near-black (maskable có safe-zone 80%).
+- **Service worker** (`web/public/sw.js`, viết tay không workbox):
+  shell (`index.html`) network-first + fallback cache khi offline (mở login không cần mạng);
+  `/assets/*` + icons cache-first (tên file có hash, stale an toàn);
+  `/ws`, `/healthz` không bao giờ bị chặn; version bump xoá cache cũ.
+  Đăng ký chỉ ở build production (`import.meta.env.PROD`) — không dính HMR của Vite.
+- **Relay**: thêm MIME `.webmanifest` (application/manifest+json) và `.png`.
+- **Kiểm thử**: local browser thật — SW `activated`, scope `/`, manifest parse OK,
+  cache chứa shell; CDP offline mode → fetch `/` vẫn 200 từ cache (fallback hoạt động).
+  Trên VPS: manifest/sw/icons trả 200 + MIME đúng qua HTTPS.
