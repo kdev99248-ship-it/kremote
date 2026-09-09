@@ -26,8 +26,9 @@ PrivateTmp=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
-# Writable paths: the JSON store and the TLS drop dir it watches.
-ReadWritePaths=/home/@SVC_USER@/.kremote-relay
+# State lives in /var/lib/kremote (systemd creates it, owned by the service
+# user) — never under /home, which ProtectHome=true hides.
+StateDirectory=kremote
 ReadOnlyPaths=/etc/kremote/tls
 
 [Install]

@@ -38,8 +38,7 @@ if ! id "$SVC_USER" >/dev/null 2>&1; then
   log "Creating service user '$SVC_USER'"
   useradd --system --create-home --shell /usr/sbin/nologin "$SVC_USER"
 fi
-mkdir -p "$TLS_DIR" "/home/$SVC_USER/.kremote-relay"
-chown -R "$SVC_USER:$SVC_USER" "/home/$SVC_USER/.kremote-relay"
+mkdir -p "$TLS_DIR"
 chown -R "$SVC_USER:$SVC_USER" "$TLS_DIR"
 chmod 750 "$TLS_DIR"
 
@@ -102,7 +101,7 @@ KREMOTE_RELAY_HOST=0.0.0.0
 KREMOTE_RELAY_PORT=443
 KREMOTE_TLS_CERT=$TLS_DIR/fullchain.pem
 KREMOTE_TLS_KEY=$TLS_DIR/privkey.pem
-KREMOTE_RELAY_HOME=/home/$SVC_USER/.kremote-relay
+KREMOTE_RELAY_HOME=/var/lib/kremote
 ENV_EOF
   chmod 640 "$ENV_FILE"
   chown root:"$SVC_USER" "$ENV_FILE"
@@ -121,7 +120,7 @@ systemctl --no-pager --lines=8 status kremote-relay || true
 log "Provisioning done."
 echo "  Next:"
 echo "   1) Register this Windows device:"
-echo "        sudo -u $SVC_USER KREMOTE_RELAY_HOME=/home/$SVC_USER/.kremote-relay \\"
+echo "        sudo -u $SVC_USER KREMOTE_RELAY_HOME=/var/lib/kremote \\"
 echo "          node $APP_DIR/packages/relay/src/keygen.ts my-windows"
 echo "   2) Put the printed DEVICE_KEY in the Windows agent config"
 echo "      (relayUrl = wss://$DOMAIN/ws)."

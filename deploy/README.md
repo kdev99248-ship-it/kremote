@@ -37,7 +37,7 @@ which the relay watches), installs + starts the `kremote-relay` systemd unit.
 On the VPS:
 
 ```bash
-sudo -u kremote KREMOTE_RELAY_HOME=/home/kremote/.kremote-relay \
+sudo -u kremote KREMOTE_RELAY_HOME=/var/lib/kremote \
   node /opt/kremote/packages/relay/src/keygen.ts my-windows
 ```
 
