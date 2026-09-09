@@ -10,6 +10,11 @@ import { looksLikeClear } from './clear';
 import { FileTree, loadEditor } from './files';
 import type { Editor } from './editor';
 import { GitPanel } from './git';
+import { CommandWatch } from './command-watch';
+import {
+  enableNotifications, disableNotifications, readPref, shouldNotify,
+  showFinishedNotification, notificationsSupported,
+} from './notify';
 
 // One WS to the relay; multiple terminal tabs multiplexed over it by termId.
 // Views: Terminals | Files | Git — switched by the header buttons.
@@ -28,6 +33,7 @@ interface Tab {
   cwd: string;            // working directory of the pty
   program: string;        // running program surfaced via OSC title, else shellName
   dead: boolean;
+  watch: CommandWatch;    // "command finished" detection for notifications
 }
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -210,6 +216,7 @@ onFrame('term.data', (f) => {
   // Windows cls/clear never erases the scrollback (see clear.ts) — append a
   // real ESC[3J when a clear shape passes so the screen is genuinely empty.
   tab.term.write(f.data + (looksLikeClear(f.data) ? '\x1b[3J' : ''));
+  tab.watch.onOutput();
 });
 
 onFrame('term.exit', (f) => {
@@ -371,6 +378,7 @@ function createTab(initialLabel: string): Tab {
     termId: '', name: label.textContent!, term, fit, host, tabEl,
     labelEl: label, titleEl: title, badgeEl: badge,
     shellName: 'shell', cwd: '', program: '', dead: false,
+    watch: new CommandWatch(() => onCommandDone(tab)),
   };
   tabs.push(tab);
   renderTitle(tab);
@@ -394,12 +402,36 @@ function createTab(initialLabel: string): Tab {
   x.addEventListener('click', () => closeTab(tab));
 
   term.onData((data) => {
-    if (!tab.dead && tab.termId) send({ type: 'term.input', termId: tab.termId, data });
+    if (!tab.dead && tab.termId) sendInput(tab, data);
   });
 
   activate(tab);
   fitSoon(tab);
   return tab;
+}
+
+// Single choke point for everything typed into a terminal: forward to the pty
+// and let the command watcher know a line (anything ending in CR) went out.
+function sendInput(tab: Tab, data: string): void {
+  send({ type: 'term.input', termId: tab.termId, data });
+  if (data.includes('\r')) tab.watch.onSubmit();
+}
+
+// A watched command just finished (output ran ≥ RUN_MIN then went quiet).
+// Notify only when it's useful: the page is hidden or another tab is focused.
+function onCommandDone(tab: Tab): void {
+  if (!tab.watch.consumeDone()) return;
+  if (!readPref()) return;
+  if (!shouldNotify(active === tab)) return;
+  showFinishedNotification({
+    title: `${tab.program || tab.shellName} — command finished`,
+    body: `${tab.name} · ${cwdTail(tab.cwd) || 'kremote'}`,
+    onClick: () => {
+      window.focus();
+      switchView('terminals');
+      activate(tab);
+    },
+  });
 }
 
 async function newTab(): Promise<void> {
@@ -517,6 +549,30 @@ function closeTab(tab: Tab, skipServer = false): void {
 
 newTabBtn.addEventListener('click', () => void newTab());
 
+// ── Command-finished notifications (bell) ──────────────────────────────
+// Hidden entirely when Notification is unsupported (e.g. insecure context —
+// the app must be served over HTTPS for SW/notifications anyway).
+const notifyBell = $('notify-bell');
+if (notificationsSupported()) {
+  notifyBell.hidden = false;
+  const paintBell = (on: boolean) => {
+    notifyBell.classList.toggle('on', on);
+    notifyBell.textContent = on ? '🔔' : '🔕';
+    notifyBell.title = on
+      ? 'Command-finished notifications ON — click to turn off'
+      : 'Command-finished notifications OFF — click to turn on';
+  };
+  paintBell(readPref());
+  notifyBell.addEventListener('click', () => {
+    if (readPref()) {
+      disableNotifications();
+      paintBell(false);
+      return;
+    }
+    void enableNotifications().then((ok) => paintBell(ok));
+  });
+}
+
 window.addEventListener('resize', () => { if (active) fitSoon(active); });
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && active) fitSoon(active);
@@ -551,7 +607,7 @@ function composerSendLine(): void {
   const line = composerInput.value;
   composerInput.value = '';
   if (!active || active.dead || !active.termId) return;
-  if (line) send({ type: 'term.input', termId: active.termId, data: line + '\r' });
+  if (line) sendInput(active, line + '\r');
 }
 
 composerInput.addEventListener('compositionstart', () => { composing = true; });
@@ -590,7 +646,7 @@ mobileKeys.addEventListener('click', (e) => {
   const mod = btn.getAttribute('data-key');
 
   if (seq != null) {
-    send({ type: 'term.input', termId: active.termId, data: unescapeSeq(seq) });
+    sendInput(active, unescapeSeq(seq));
     return;
   }
   if (mod != null) {
@@ -610,12 +666,12 @@ document.addEventListener('keydown', (e) => {
     const code = e.key.toUpperCase().charCodeAt(0) - 64;
     if (code >= 0 && code <= 31) {
       e.preventDefault();
-      send({ type: 'term.input', termId: active.termId, data: String.fromCharCode(code) });
+      sendInput(active, String.fromCharCode(code));
       releaseModifiers();
     }
   } else if (e.key === 'Escape' && heldModifiers.has('Alt')) {
     e.preventDefault();
-    send({ type: 'term.input', termId: active.termId, data: '\x1b' });
+    sendInput(active, '\x1b');
     releaseModifiers();
   }
 }, true);

@@ -197,6 +197,10 @@ button, input, textarea { font-family: var(--font-ui); }
   background: var(--faint);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, .04);
 }
+#notify-bell { background: transparent; color: var(--faint);
+  border: none; border-radius: var(--r-ctl); width: 30px; height: 30px;
+  font-size: 15px; line-height: 1; cursor: pointer; flex: none; }
+#notify-bell.on { color: var(--accent); }
 #conn-state.on { background: var(--ok); box-shadow: 0 0 8px rgba(34, 197, 94, .65); }
 #conn-state.off { background: var(--danger); box-shadow: 0 0 8px rgba(255, 95, 87, .55); }
 
