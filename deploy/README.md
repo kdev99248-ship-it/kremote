@@ -1,9 +1,10 @@
 # Deploying the kremote relay to a VPS
 
-The **relay** runs on a cheap public VPS (Ubuntu/Debian). It's pure JS — only
-the `ws` dependency — so no native build tools are needed. TLS terminates in
-Node itself on `:443` (no reverse proxy); Let's Encrypt renewals hot-reload the
-cert with no restart. The **agent** stays on your Windows machine and dials out.
+The **relay** runs on a cheap public VPS (Ubuntu/Debian). It builds from git on
+the VPS itself — clone once, then `git pull + rebuild` on every update. TLS
+terminates in Node on `:443` (no reverse proxy); Let's Encrypt renewals
+hot-reload the cert with no restart. The **agent** stays on your Windows machine
+and dials out.
 
 ```
 [Windows agent]  ──wss dial-out──▶  [VPS relay :443]  ◀──wss──  [Phone/browser]
@@ -15,32 +16,23 @@ cert with no restart. The **agent** stays on your Windows machine and dials out.
 - A VPS with a public IP, ports **80** (ACME challenge) and **443** open.
 - A DNS **A record** pointing your domain (e.g. `remote.example.com`) at the VPS.
 - SSH access as root (or a sudo user).
-- On your dev machine: `rsync`, `ssh`, and the repo's web toolchain (`npm`).
+- The repo pushed to GitHub (public, so the VPS can clone without auth).
 
 ## 1. Provision the VPS (once)
 
-Copy the repo (or at least `deploy/`, `packages/relay`, `packages/shared`) to the
-VPS, then:
+SSH into the VPS and run the setup script straight from GitHub:
 
 ```bash
-sudo DOMAIN=remote.example.com EMAIL=you@example.com bash deploy/setup-vps.sh
+curl -fsSL https://raw.githubusercontent.com/kdev99248-ship-it/kremote/feat/terminal-mvp/deploy/setup-vps.sh \
+  | sudo DOMAIN=remote.example.com EMAIL=you@example.com bash
 ```
 
-This installs Node 24 + certbot, creates the `kremote` service user, issues the
-TLS cert, installs a renewal hook that copies certs into `/etc/kremote/tls/`
-(which the relay watches), and installs the `kremote-relay` systemd unit +
-`/etc/kremote/relay.env`.
+This installs Node 24 + git + certbot, creates the `kremote` service user,
+**clones the repo into `/opt/kremote`, installs deps and builds the web UI**,
+issues the TLS cert, installs a renewal hook (certs land in `/etc/kremote/tls/`,
+which the relay watches), installs + starts the `kremote-relay` systemd unit.
 
-## 2. Push code from your dev machine
-
-```bash
-VPS=root@remote.example.com bash deploy/deploy.sh
-```
-
-Builds the web UI locally, rsyncs `relay` + `shared` + `public` to the VPS,
-installs `ws`, and restarts the service. Re-run this on every code change.
-
-## 3. Register your Windows device (once)
+## 2. Register your Windows device (once)
 
 On the VPS:
 
@@ -64,26 +56,40 @@ Copy the printed **DEVICE_KEY** into the Windows agent config
 > `relayUrl` must include the **`/ws`** path. `root` uses **forward slashes** on
 > Windows.
 
-## 4. Start everything
+## 3. Start the agent + open the app
 
 ```bash
-# VPS
-sudo systemctl start kremote-relay
-journalctl -u kremote-relay -f          # watch the audit log
-
-# Windows (agent)
-npm run agent                           # prints an ACCESS_KEY + ?key= URL
+# Windows
+npm run agent                 # prints an ACCESS_KEY + a ?key= URL
 ```
 
 Open `https://remote.example.com/?key=<ACCESS_KEY>` on your phone. The browser
 stores a durable session token, so later visits skip the login and reattach the
 live terminal.
 
+## Updating after code changes
+
+You changed code and pushed to GitHub. Two ways to update the VPS:
+
+**A. On the VPS** — pull + rebuild + restart:
+
+```bash
+bash /opt/kremote/deploy/update.sh
+```
+
+**B. From your dev machine** — one command (pushes the current branch, then runs
+update.sh over SSH):
+
+```bash
+VPS=root@1.2.3.4 bash deploy/deploy.sh
+```
+
 ## Git push credentials (optional)
 
-`git push` runs unattended, so it never prompts. Two ways to authenticate:
+`git push` from the web git panel runs unattended, so it never prompts. Two ways
+to authenticate:
 
-1. **SSH remote** — install an SSH key for the `agent`'s OS user; nothing else
+1. **SSH remote** — install an SSH key for the agent's OS user; nothing else
    needed (the agent uses `ssh -o BatchMode=yes`).
 2. **HTTPS PAT** — add to the agent config, or set env vars for the agent:
 
