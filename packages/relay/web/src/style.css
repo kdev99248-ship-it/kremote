@@ -161,37 +161,10 @@ button, input, textarea { font-family: var(--font-ui); }
   color: var(--fg); background: var(--active);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
-#tabs {
-  display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0;
-  scrollbar-width: none;
-}
-#tabs::-webkit-scrollbar { display: none; }
-.tab {
-  display: flex; align-items: center; gap: 6px;
-  background: transparent; color: var(--faint);
-  border: 1px solid transparent; border-radius: var(--r-ctl);
-  padding: 5px 6px 5px 11px; font-size: 12.5px; font-weight: 500;
-  cursor: pointer; white-space: nowrap; flex: none;
-  transition: color .15s, background .15s, border-color .15s;
-}
-.tab:hover { color: var(--muted); background: var(--panel-2); }
-.tab.active {
-  color: var(--fg); background: var(--panel-2); border-color: var(--border);
-  box-shadow: inset 0 2px 0 var(--accent);
-}
-.tab.dead { color: var(--danger); }
-.tab .x {
-  border: 0; background: transparent; color: inherit; cursor: pointer;
-  font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 5px;
-}
-.tab .x:hover { background: var(--border-2); color: var(--fg); }
-#new-tab {
-  background: transparent; color: var(--muted);
-  border: 1px dashed var(--border-2); border-radius: var(--r-ctl);
-  width: 30px; height: 30px; font-size: 16px; cursor: pointer; flex: none;
-  transition: color .15s, border-color .15s, background .15s;
-}
-#new-tab:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+#view-switcher { flex: none; }
+#more-btn { margin-left: auto; }
+/* The terminal screen owns the whole viewport — no top bar, no view switcher. */
+#app[data-view="term"] > #tabbar { display: none; }
 #conn-state {
   width: 8px; height: 8px; border-radius: 50%; flex: none;
   background: var(--faint);
@@ -200,51 +173,30 @@ button, input, textarea { font-family: var(--font-ui); }
 #conn-state.on { background: var(--ok); box-shadow: 0 0 8px rgba(34, 197, 94, .65); }
 #conn-state.off { background: var(--danger); box-shadow: 0 0 8px rgba(255, 95, 87, .55); }
 
-/* ── Terminal: a floating window on a subtly textured "desk" ────────────── */
-#terminals {
-  position: relative;
-  background:
-    radial-gradient(110% 70% at 50% -15%, rgba(228, 108, 76, .07), transparent 62%),
-    var(--bg);
-}
-/* Faint dotted grid so the window reads as floating, not painted-on. */
-#terminals::before {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background-image: radial-gradient(rgba(255, 255, 255, .028) 1px, transparent 1.4px);
-  background-size: 22px 22px;
-  mask-image: radial-gradient(120% 100% at 50% 0%, #000 55%, transparent 100%);
-}
-.term-host {
-  position: absolute; inset: 0; padding: 16px;
-  display: flex; overflow: hidden;
-}
-.term-host[hidden] { display: none !important; }
-
-.term-window {
-  flex: 1; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column;
-  background: var(--bg-deep);
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-card);
-  overflow: hidden;
-  box-shadow: var(--shadow-card), 0 0 0 1px rgba(0, 0, 0, .4);
-}
-.term-titlebar {
-  display: flex; align-items: center; gap: 12px;
-  flex: none; height: 40px; padding: 0 14px;
-  background: linear-gradient(var(--panel), var(--panel-2));
+/* ── Terminal screen: full-bleed, one slim bar, no window chrome ───────── */
+#terminals { position: relative; display: flex; flex-direction: column; background: var(--bg-deep); }
+#term-bar {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  height: 46px; padding: 0 6px 0 2px;
+  padding-top: env(safe-area-inset-top);
+  height: calc(46px + env(safe-area-inset-top));
+  background: linear-gradient(var(--panel), var(--bg));
   border-bottom: 1px solid var(--border);
   user-select: none;
 }
-.term-lights { display: flex; gap: 8px; flex: none; }
-.term-lights .l {
-  width: 12px; height: 12px; border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25);
+#term-back, #term-kill {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: var(--tap); height: 38px; padding: 0;
+  background: transparent; border: 0; border-radius: var(--r-ctl);
+  color: var(--fg-2); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color .15s, background .15s;
 }
-.term-lights .l-r { background: #ff5f57; }
-.term-lights .l-y { background: #febc2e; }
-.term-lights .l-g { background: #28c840; }
-.term-title {
+#term-back { font-size: 28px; line-height: 1; }
+#term-kill { font-size: 15px; }
+#term-back:hover, #term-back:active { color: var(--accent); background: var(--accent-dim); }
+#term-kill:hover, #term-kill:active { color: var(--danger); background: rgba(255, 95, 87, .1); }
+#term-title {
   flex: 1; min-width: 0;
   font: 12.5px/1 var(--font-mono); color: var(--muted);
   letter-spacing: .01em;
@@ -275,7 +227,15 @@ button, input, textarea { font-family: var(--font-ui); }
 @media (prefers-reduced-motion: reduce) {
   .term-badge.reconnecting::before { animation: none; }
 }
-.term-screen { flex: 1; min-height: 0; min-width: 0; padding: 8px 10px; overflow: hidden; }
+
+/* Every pane stacks here; only the active one is not [hidden]. */
+#term-stack { position: relative; flex: 1; min-height: 0; }
+.term-host {
+  position: absolute; inset: 0;
+  padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+.term-host[hidden] { display: none !important; }
 
 /* ── Files view ────────────────────────────────────────────────────── */
 #files { display: flex; }
@@ -601,7 +561,7 @@ button, input, textarea { font-family: var(--font-ui); }
 
 @media (pointer: coarse) {
   #mobile-keys { display: flex; }
-  .tab .x, .git-file, .file-tree-row, .view-btn { -webkit-tap-highlight-color: transparent; }
+  .git-file, .file-tree-row, .view-btn, .session-open { -webkit-tap-highlight-color: transparent; }
 }
 
 /* ── Mobile text composer (Vietnamese/IME input) ────────────────────── */
@@ -637,8 +597,7 @@ button, input, textarea { font-family: var(--font-ui); }
 
 /* Hover states read as stuck on touch — neutralise them where there is no hover. */
 @media (hover: none) {
-  .tab:hover { background: transparent; color: var(--faint); }
-  .tab.active:hover { background: var(--panel-2); color: var(--fg); }
+  .session-open:hover { background: var(--panel); border-color: var(--border); }
   .git-file:hover { background: transparent; }
   .git-file.selected:hover { background: var(--accent-dim); }
   .file-tree li:hover { background: transparent; }
@@ -656,33 +615,13 @@ button, input, textarea { font-family: var(--font-ui); }
   }
   #view-switcher { order: 1; flex: 1; }
   .view-btn { flex: 1; padding: 9px 4px; font-size: 12.5px; min-height: 34px; }
-  #conn-state { order: 2; margin-left: 2px; }
-  #tabs { order: 3; flex: 1 1 100%; }
-  #new-tab { order: 4; width: 34px; height: 34px; }
+  #more-btn { order: 2; margin-left: 0; }
+  #conn-state { order: 3; margin-left: 2px; }
 
-  /* Tabs are meaningless outside the terminal view — reclaim the row. */
-  #app[data-view="files"] #tabs,
-  #app[data-view="files"] #new-tab,
-  #app[data-view="git"] #tabs,
-  #app[data-view="git"] #new-tab { display: none; }
-
-  .tab { padding: 7px 7px 7px 12px; font-size: 12.5px; min-height: 34px; }
-  .tab .x {
-    font-size: 17px;
-    line-height: 1;
-    min-width: 34px;
-    min-height: 34px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: -3px;
-  }
-  .term-host { padding: 7px; }
-  .term-window { border-radius: 10px; }
-  .term-titlebar { height: 34px; gap: 9px; padding: 0 10px; }
-  .term-lights .l { width: 10px; height: 10px; }
-  .term-title { font-size: 11.5px; }
-  .term-screen { padding: 5px 6px; }
+  .term-host { padding: 3px 4px; }
+  #term-title { font-size: 11.5px; }
+  .home-head { padding: 12px 10px 8px; }
+  #sessions-list { padding: 0 10px calc(20px + env(safe-area-inset-bottom)); }
 
   /* Files: tree and editor become full-screen layers; editor slides over tree. */
   #files { position: relative; overflow: hidden; }
@@ -747,9 +686,7 @@ button, input, textarea { font-family: var(--font-ui); }
 @media (max-width: 900px) and (max-height: 500px) {
   #tabbar { padding: 4px 8px; gap: 6px; }
   .view-btn { min-height: 28px; padding: 5px 8px; }
-  #tabs { flex: 1 1 auto; }
-  .tab { min-height: 28px; padding: 4px 6px 4px 10px; }
-  #new-tab { width: 28px; height: 28px; }
+  #term-bar { height: calc(38px + env(safe-area-inset-top)); }
   #mobile-keys { padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); gap: 5px; }
   #mobile-keys button { min-height: 32px; min-width: 38px; padding: 6px 10px; }
   #git-panel { padding: 6px 8px; gap: 6px; }
@@ -840,20 +777,55 @@ button, input, textarea { font-family: var(--font-ui); }
   color: var(--fg); background: var(--hover); }
 .history-empty { color: var(--faint); text-align: center; padding: 40px 0; font-size: 13px; }
 
-/* ── Sessions drawer (live pty picker) ────────────────────────────────── */
-#sessions-drawer { position: fixed; inset: 0; z-index: 70; display: flex;
-  flex-direction: column; background: rgba(4, 4, 4, .72); backdrop-filter: blur(4px); }
-#sessions-list { flex: 1; overflow-y: auto; padding: 0 16px 24px;
+/* ── Home: live sessions on the host ──────────────────────────────────── */
+#home { display: flex; flex-direction: column; overflow: hidden; }
+/* Rows are one line of text; letting them run to a 1280px edge strands the ✕
+   far from the name they belong to. */
+.home-head { display: flex; align-items: center; gap: 8px; padding: 16px 16px 10px; flex: none;
+  width: 100%; max-width: 780px; margin-inline: auto; }
+.home-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 700;
+  letter-spacing: .10em; text-transform: uppercase; color: var(--faint); }
+.home-ghost { flex: none; width: 34px; height: 34px; font-size: 15px;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border-2); border-radius: var(--r-ctl); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color .15s, border-color .15s, background .15s; }
+.home-ghost:hover, .home-ghost:active { color: var(--accent); border-color: var(--accent-line); }
+.home-cta { flex: none; min-height: 34px; padding: 8px 14px;
+  background: var(--accent-dim); color: var(--accent);
+  border: 1px solid var(--accent-line); border-radius: var(--r-ctl);
+  font: 600 12.5px/1 var(--font-ui); cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: background .15s, color .15s; }
+.home-cta:hover, .home-cta:active { background: var(--accent); color: #1a0d07; }
+
+#sessions-list { flex: 1; min-height: 0; overflow-y: auto;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom));
+  width: 100%; max-width: 780px; margin-inline: auto;
   display: flex; flex-direction: column; gap: 6px; }
-.session-row { display: flex; flex-direction: column; gap: 3px; text-align: left;
+/* Row = the whole card opens the session, the ✕ on its right kills the pty. */
+.session-row { display: flex; align-items: stretch; gap: 6px; }
+.session-open { flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
   background: var(--panel); color: var(--fg); border: 1px solid var(--border);
   border-radius: var(--r-ctl); padding: 12px 14px; cursor: pointer;
-  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
-.session-row:hover, .session-row:active { border-color: var(--accent-line);
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: border-color .15s, background .15s; }
+.session-open:hover, .session-open:active { border-color: var(--accent-line);
   background: var(--hover); }
 .session-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 .session-meta { color: var(--faint); font-family: var(--font-mono);
   font-size: 11.5px; overflow-wrap: anywhere; }
+.session-kill { flex: none; width: var(--tap);
+  background: var(--panel); color: var(--faint);
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+  font-size: 13px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: color .15s, border-color .15s, background .15s; }
+.session-kill:hover, .session-kill:active { color: var(--danger);
+  border-color: rgba(255, 95, 87, .4); background: rgba(255, 95, 87, .08); }
+.session-empty { color: var(--faint); text-align: center; padding: 48px 16px;
+  font-size: 13px; line-height: 1.6; }
 
 /* ── Tail (Logs view) ─────────────────────────────────────────────────── */
 #tail { overflow-y: auto; }
@@ -888,10 +860,71 @@ button, input, textarea { font-family: var(--font-ui); }
 .tail-status { padding: 8px 14px 14px; color: var(--faint); font-size: 12px; }
 .tail-status.error { color: var(--danger); }
 
-/* Light-theme terminal: soften the surrounding window chrome when the
-   terminal itself flips to the paper look. */
-.term-window:has(.xterm-light) {
-  background: linear-gradient(#f5efe9, #ece4dc);
-  border-color: rgba(0, 0, 0, .12);
-}
+/* Light-theme terminal: the pane ground shows through xterm's padding, so it
+   has to flip with the theme too. */
+.term-host:has(.xterm-light) { background: #f5efe9; }
 
+
+/* ── QR login ─────────────────────────────────────────────────────────── */
+.qr-open { width: 100%; margin-top: 8px; min-height: var(--tap);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border-2); border-radius: var(--r-ctl);
+  font: 600 13px/1 var(--font-ui); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color .15s, border-color .15s, background .15s; }
+.qr-open:hover, .qr-open:active { color: var(--accent);
+  border-color: var(--accent-line); background: var(--accent-dim); }
+
+#qr-scan { position: fixed; inset: 0; z-index: 90; background: #000;
+  display: flex; align-items: center; justify-content: center; }
+#qr-video { position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; background: #000; }
+/* Reticle: a dimmed surround with a clear square, so it is obvious where to aim. */
+#qr-reticle { position: relative; width: min(74vw, 300px); aspect-ratio: 1;
+  max-width: 100%; border-radius: 18px;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .55); }
+#qr-hint { position: absolute; left: 16px; right: 16px;
+  bottom: calc(32px + env(safe-area-inset-bottom));
+  margin: 0; text-align: center; font-size: 13px; line-height: 1.5;
+  color: var(--fg-2); text-shadow: 0 1px 6px rgba(0, 0, 0, .9); }
+#qr-hint.error { color: var(--warn); }
+#qr-close { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px;
+  width: var(--tap); height: var(--tap);
+  background: rgba(0, 0, 0, .5); color: var(--fg);
+  border: 1px solid var(--hairline); border-radius: 50%;
+  font-size: 16px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+/* ── Terminal-only chrome ─────────────────────────────────────────────── */
+/* The keys row and the IME composer belong to the terminal screen alone. */
+#app:not([data-view="term"]) #mobile-keys,
+#app:not([data-view="term"]) #composer { display: none !important; }
+
+/* Scrollback search: floats under the terminal bar rather than shoving the
+   pty down, so the visible rows do not reflow while searching. */
+#term-search {
+  position: absolute; z-index: 30;
+  top: calc(46px + env(safe-area-inset-top) + 8px); right: 10px; left: 10px;
+  max-width: 420px; margin-left: auto;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px; background: var(--panel);
+  border: 1px solid var(--border-2); border-radius: var(--r-ctl);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .55);
+}
+#term-search input {
+  flex: 1; min-width: 0; min-height: 34px; padding: 6px 10px;
+  background: var(--panel-2); color: var(--fg);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  font: 13px/1.2 var(--font-mono);
+}
+#term-search input:focus { outline: none; border-color: var(--accent-line); }
+#term-search button {
+  flex: none; min-width: 34px; min-height: 34px;
+  background: var(--panel-2); color: var(--fg-2);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+#term-search button:hover, #term-search button:active {
+  color: var(--accent); border-color: var(--accent-line);
+}

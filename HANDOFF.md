@@ -1,189 +1,151 @@
-# Handoff: kremote — Session picker (attach live terminals from any device)
+# Handoff: kremote — Home screen, full-screen terminal, QR login
 
 **Generated**: 2026-09-10
 **Branch**: `feat/terminal-mvp`
-**Status**: Ready for Review — code complete, committed (`1e2d4c4`), NOT pushed, NOT deployed.
+**Status**: Code complete, verified E2E in a real browser. NOT pushed, NOT deployed.
 
 ## Goal
 
-Open kremote on a phone and see/attach the terminal sessions left running on the
-PC (e.g. `claude` started earlier). Phase 1: a **Sessions picker** listing every
-live pty with its running program, cwd and idle time; tap to attach.
+Drop the session tab strip. Navigation is now two levels:
+
+- **Home / Files / Git / Logs** — the browsing screens, sharing one top bar.
+  Home lists the live sessions on the host and has a `＋ New session` button.
+- **Terminal** — tapping a session row opens a screen with *no* view switcher and
+  *no* tab strip: just a slim bar (‹ back · title · badge · ✕ kill) and the pty
+  filling the rest of the viewport.
+
+Plus: the installed PWA can **scan the QR** the agent prints, instead of needing
+an address bar to paste `?key=` into.
 
 ## Completed
 
-- [x] **Agent tracks program + activity per pty** (`packages/agent/src/term.ts`):
-      `lastActivity` (epoch ms of last output) and `title` (last OSC window title)
-      per terminal; `parseOscTitle()` helper.
-- [x] **Protocol** (`packages/shared/src/protocol.ts`): `term.list.res.terms[]`
-      gains `title?` + `lastActivity?` (optional → backward compatible).
-- [x] **Web Sessions picker** (`index.html`, `src/main.ts`, `src/style.css`):
-      `#sessions-drawer` opened from ••• → 🖥 Sessions; row = program label + cwd +
-      idle + "open" marker; tap → focus or attach.
-- [x] **`syncTerms()` behavior change**: fresh device no longer auto-spawns a tab
-      per live session — own tabs still revive silently; others go to the picker.
-- [x] **Tests** `packages/agent/test/term.test.ts` (new). Suite **90/90**,
+- [x] **Home view** (`#home`): live pty list from `term.list` — program label,
+      cwd, idle, "open here" flag; per-row ✕ kills the pty (even one this browser
+      never opened); `＋ New session`; re-polls every 10s while Home is visible
+      and the page is not hidden.
+- [x] **Terminal screen** (`#terminals` + `#term-bar` + `#term-stack`): full-bleed
+      xterm, macOS window chrome removed. `#app[data-view="term"]` is the CSS
+      switch that hides the top bar and shows `#mobile-keys` / `#composer`.
+- [x] **`Tab` → `Pane`**: no per-session tab button. Panes live in `#term-stack`,
+      keep their scrollback in the background; Home is the only session switcher.
+      Badge/title paint into the one shared bar.
+- [x] **Failed attach no longer leaves a husk**: `attachToTerm()` returns
+      `boolean`; a stale row discards the just-built pane (`discardPane()`), stays
+      on Home and repaints the list.
+- [x] **`syncTerms()`**: a reconnect no longer yanks the user off Files/Git/Logs.
+      Home is forced only from a terminal screen whose pane is dead.
+- [x] **QR login** (`src/qrscan.ts` + "Scan QR code" on the login screen):
+      `BarcodeDetector` first, lazy `import('jsqr')` fallback (separate ~47KB gz
+      chunk), frames downscaled to ≤640px, 6 scans/s. `parseQrPayload()` accepts
+      only a `?key=` URL or a bare key.
+- [x] **Tests** `packages/relay/web/test/qrscan.test.ts` (new; root `npm test`
+      glob extended to `packages/relay/web/test/*.test.ts`). Suite **97/97**,
       `npm run typecheck` + `npm run web:build` clean.
-- [x] `docs/progress.md` updated; committed `1e2d4c4` with Co-Authored-By line.
+- [x] `docs/progress.md` updated.
 
 ## Not Yet Done
 
-- [ ] **Push** `feat/terminal-mvp` to origin (`git push`).
+- [ ] **Commit + push** `feat/terminal-mvp`.
 - [ ] **Deploy to VPS** — `bash deploy/deploy.sh` in an *interactive* terminal
-      (SSH password prompt; see the deploy blocker note below, carried from the
-      previous batch). Agent + web rebuild from git; no new deps, no relay change.
-- [ ] **Real-device E2E** (not yet run — see Resume Instructions §3–6): verify the
-      picker shows the right program/idle, fresh device opens the drawer (not
-      auto-tabs), reconnect stays silent, empty host opens one tab.
+      (SSH password prompt). **One new dep this time** (`jsqr` in
+      `packages/relay/web`); `deploy/update.sh:28-29` already runs `npm install`
+      then `npm run web:build`, so the deploy scripts need no change.
+- [ ] **Real-device checks** that a desktop browser cannot cover: the QR scanner
+      against a real phone camera (Chromium here has no `BarcodeDetector`, so only
+      the jsQR path was exercised), and the mobile keys / composer row on a coarse
+      pointer (they are `display:none` under `pointer: fine`).
 
 ## Failed Approaches (Don't Repeat These)
 
+- **Two agents against one relay**: `pkill -f packages/agent/src/index.ts` does
+  NOT kill the node child on Windows/Git Bash. Two agents sharing a deviceId
+  kick each other off in a ~500ms reconnect loop, and `term.attach` then fails
+  with "no such terminal" for sessions the *other* agent owns. Find and stop them
+  with PowerShell `Get-CimInstance Win32_Process` + `Get-NetTCPConnection`.
+- **`heredoc` through the Bash tool** for large HTML: apostrophes in the content
+  break the outer quoting. Use the Write tool for whole files, `node -e` with a
+  script for surgical replacements.
 - **Phase 2 — attaching native terminals started outside kremote (tmux/WSL)**:
-  **dropped by the user.** node-pty can only control processes *it* spawned; it
-  cannot adopt a foreign console's pty on native Windows, and there's no native
-  tmux to reattach to. Phase 1 only covers kremote-spawned ptys (which already
-  survive in agent RAM).
-- **Auto-attaching every live session as a tab on connect** (the old
-  `syncTerms()` behavior): noisy on a phone. Replaced with: revive *this
-  browser's own* tabs silently, offer everything else in the picker.
-- **Explore subagents** (`Explore`/`general-purpose`) fail here with
-  `model_not_found` (HTTP 404, `claude-opus-5`). Explore with Read/Grep/Glob
-  directly.
+  dropped by the user earlier; node-pty cannot adopt a foreign console's pty.
+- **Auto-attaching every live session on connect**: replaced long ago by the
+  picker, now by Home. Do not bring it back.
 
 ## Key Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| Agent tracks the OSC window title per pty | The web only derives the program name from xterm's `onTitleChange` for tabs *it* opened. A fresh phone would show "pwsh" for everything, so the source of truth must be the agent. |
-| Best-effort title parse (residual tail, no state machine) | A title split across two pty chunks just updates on the next emission — never fatal. Cheap. |
-| Fresh device → show picker, not auto-tabs | User explicitly chose "Hiện danh sách để tự chọn" (show a list to pick). |
-| Reconnect path left identical | Existing-tab revival (`attachToTerm(info, existing)`) is untouched to avoid regressions; behavior change is scoped to *un-tabbed* live sessions only. |
-| Only protocol edit is the two optional fields | `term.attach`/`term.data` etc. unchanged; old clients/agents interop fine. |
+| Home is the 4th nav item, not a drawer | User's pick. The session list is a destination, not a transient overlay — and it needs room for per-row actions. |
+| Terminal is a screen, not a view | "terminal giờ sẽ full màn hình luôn cho gọn gàng". Hiding the switcher is the point; a tab strip on a phone was noise. |
+| Panes stay alive when you leave the terminal | Scrollback and the pty attachment survive a trip to Home/Files, so going back is instant and lossless. |
+| Per-row ✕ kills the pty; ‹ back just leaves | Two different intents. Closing the last session must not silently spawn another (the old `closeTab` did). |
+| `BarcodeDetector` first, jsQR lazily | Native is free where it exists; iOS Safari/Firefox users get a working scanner without everyone paying 130KB. |
+| `parseQrPayload` rejects URLs with no key | It can navigate the browser to another origin. Only a well-formed kremote login URL earns that. |
 
 ## Current State
 
-**Working**: All Phase-1 code compiles and is committed. 90/90 tests pass
-(includes a real-pty test that spawns `node -e` and asserts `list()` reports
-`title:'claude'`). typecheck + web:build clean.
+**Working**: everything above, exercised against a real relay + agent in
+Playwright — fresh connect lands on Home; new session opens the full-screen
+terminal (top bar gone, xterm starts at y=46); an OSC title of `claude` shows on
+both the terminal bar and the Home row; a reload (a "fresh device" with 0 panes)
+still lists every session and re-attaches with scrollback replayed; both ✕ paths
+kill correctly and return Home; clicking a dead row logs
+`term.attach rejected: no such terminal`, creates no pane and stays on Home; the
+QR overlay opens the camera, loads the jsQR chunk and releases the camera on
+close (`srcObject === null`).
 
-**Broken**: Nothing known. Not yet exercised in a real browser/phone.
+**Broken**: nothing known.
 
-**Uncommitted Changes**: `HANDOFF.md` only (this file). The feature is committed.
+**Uncommitted Changes**: everything in this batch (see `git status`).
 
 ## Files to Know
 
 | File | Why It Matters |
 |------|----------------|
-| `packages/agent/src/term.ts` | `TermManager`; `parseOscTitle()`; `proc.onData` updates `title`/`lastActivity`; `TermInfo`/`TermEntry`. |
-| `packages/shared/src/protocol.ts` | `TermListRes.terms[]` now `{termId, shell, cwd, title?, lastActivity?}`. |
-| `packages/agent/src/client.ts` | term.list handler (`:173`, `this.terms.list()`) — **unchanged**, new fields flow through automatically. |
-| `packages/relay/web/src/main.ts` | `openSessions`/`renderSessions`/`makeSessionRow`/`idleLabel` (~`:1000`); rewritten `syncTerms()` (`:502`); `programFromTitle(raw, shellName)` (`:305`); menu `case 'sessions'` (`:599`). |
-| `packages/relay/web/index.html` | `#sessions-drawer` (after `#history-drawer`) + `data-act="sessions"` menu item. |
-| `packages/relay/web/src/style.css` | `#sessions-drawer` / `.session-row` / `.session-name` / `.session-meta` (after `.history-empty`). |
-| `packages/agent/test/term.test.ts` | New tests (`node --test`). |
-
-## Code Context
-
-**Agent — OSC title parser** (`term.ts`):
-```typescript
-// Matches OSC 0 / OSC 2 title, BEL (\x07) or ST (ESC \) terminated. Returns the
-// LAST title in the chunk, or null. Windows ConPTY uses BEL-terminated ]0;.
-export function parseOscTitle(buf: string): string | null {
-  const re = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-  let last: string | null = null, m: RegExpExecArray | null;
-  while ((m = re.exec(buf)) !== null) last = m[2];
-  return last;
-}
-```
-```typescript
-export interface TermInfo { termId: string; shell: string; cwd: string; title?: string; lastActivity: number }
-interface TermEntry { proc: pty.IPty; info: TermInfo; buffer: string; titleScan: string }
-// proc.onData: append+cap buffer; info.lastActivity = Date.now();
-//   scan = titleScan + data; if parseOscTitle(scan) !== null → info.title;
-//   titleScan = scan.slice(-256)   // residual tail catches split titles
-```
-
-**Protocol** (`protocol.ts`):
-```typescript
-export interface TermListRes {
-  type: 'term.list.res'; id: string;
-  terms: { termId: string; shell: string; cwd: string; title?: string; lastActivity?: number }[];
-}
-```
-
-**Web — picker** (`main.ts`). Program label for a row that has no Tab yet:
-```typescript
-const prog = (info.title && programFromTitle(info.title, shellBaseName(info.shell)))
-           || shellBaseName(info.shell);
-const openHere = byTermId(info.termId) !== undefined;
-// tap → existing ? activate(existing) : attachToTerm(info); then switchView('terminals')
-```
-`idleLabel(lastActivity?)` → `''` (no data) / `active` (<60s) / `idle Nm` / `idle Nh` / `idle Nd`.
-
-`syncTerms()` (the behavior change):
-```typescript
-for (const tab of [...tabs]) if (tab.termId && !liveIds.has(tab.termId)) markDead(tab);
-for (const info of live) { const ex = byTermId(info.termId); if (ex) await attachToTerm(info, ex); }
-if (tabs.some(t => !t.dead)) return;              // already on a live tab
-const untabbed = live.filter(i => !byTermId(i.termId));
-if (untabbed.length) openSessions(); else void newTab();
-```
-
-**Non-obvious**:
-- The `••• ` menu handler calls `e.stopPropagation()`, so opening a drawer from a
-  menu item doesn't immediately trip that surface's outside-close listener
-  (same pattern as history/settings).
-- `programFromTitle` returns `''` for path-like titles (pwsh/cmd set cwd as the
-  title) and maps "windows powershell"/"cmd" → the shell base name.
-- The picker sorts most-recently-active first (`lastActivity` desc).
+| `packages/relay/web/index.html` | `#home`, `#term-bar`/`#term-stack`, `#qr-scan` overlay, `qr-open` button. `#tabs`/`#new-tab`/`#sessions-drawer` are gone. |
+| `packages/relay/web/src/main.ts` | `NAV_VIEWS`/`VIEWS`/`VIEW_ELEMENT` + `switchView` (`:96`), `openPane` (`:133`), `renderTermBar` (`:295`), `createPane` (`:342`), `attachToTerm`/`discardPane` (`:459`), `syncTerms` (`:508`), Home list (`:600`), QR login (`:700`). |
+| `packages/relay/web/src/qrscan.ts` | New. `cameraSupported`, `startQrScan`, `parseQrPayload`. |
+| `packages/relay/web/src/style.css` | Terminal screen block, `#home`/`.session-*`, `#term-search` (previously unstyled), QR block at the end. |
+| `packages/relay/web/test/qrscan.test.ts` | New. Payload parsing + a `qrcode`→`jsqr` round-trip. |
+| `package.json` | Test glob now includes `packages/relay/web/test/*.test.ts`. |
 
 ## Resume Instructions
 
-1. Sanity check (optional): `npm run typecheck && npm test && npm run web:build`
-   - Expected: clean, **90/90**. `npm test` runs a real pty (`node -e`); if
-     node-pty can't spawn in the env the pty test *skips* (guarded), not fails.
-2. Push + deploy: `git push`, then in an **interactive** terminal
-   `bash deploy/deploy.sh` (reads `deploy/deploy.env`, or
-   `VPS=root@163.61.73.198 bash deploy/deploy.sh`); type the SSH password.
-   - If `Permission denied (publickey,password)`: add your pubkey to the VPS
-     `~/.ssh/authorized_keys` once, then re-run.
-3. **Picker + metadata** (PC browser): open 2 terminals; run `claude` (or any
-   program that sets an OSC title) in one. ••• → Sessions.
-   - Expected: 2 rows; the claude one shows **claude** (not pwsh) + cwd + idle;
-     the just-used one shows **active**.
-   - If it shows "pwsh": the agent didn't capture the title — check `entry.title`
-     is set in `proc.onData` and that `term.list.res` carries it.
-4. **Fresh device pick**: open kremote in a second browser/incognito.
-   - Expected: it does **not** auto-open tabs; the **Sessions drawer appears**
-     with both live sessions. Tap the claude row → a tab opens with scrollback
-     replayed; you can type.
-5. **Reconnect unchanged**: on a browser that already has tabs, drop the socket
-   (DevTools offline ~2s, back online).
-   - Expected: tabs revive silently (`attachToTerm(info, existing)`) — no picker,
-     no dupes.
-6. **Empty host**: no terminals running, fresh connect.
-   - Expected: one new tab opens (unchanged fallback).
+1. Sanity check: `npm run typecheck && npm test && npm run web:build`
+   — expected clean, **97/97**.
+2. `git push`, then deploy in an **interactive** terminal: `bash deploy/deploy.sh`
+   (it ssh's in and runs `deploy/update.sh`, which installs deps and rebuilds).
+3. On a real phone: install/open the PWA, tap **Scan QR code**, point it at the
+   QR `kremote` prints. Expected: it logs in without touching the address bar.
+   - Android/Chrome takes the `BarcodeDetector` path; iOS Safari lazy-loads jsQR
+     (watch for the `jsQR-*.js` chunk in the network panel).
+4. On the phone, check the terminal screen: keys row + ABC composer present, top
+   bar absent, ‹ returns to Home with the session still listed and still alive.
 
 ## Edge Cases & Error Handling
 
-- **Title split across two pty chunks** → caught on the next chunk via the 256-char
-  `titleScan` tail; worst case the label lags one emission. Never fatal.
-- **`term.list` rejects mid-reconnect** → `syncTerms()` returns early; `onClosed`
-  drives the next reconnect. Picker `openSessions()` shows "Could not load sessions".
-- **No live sessions** → picker shows "No live sessions on the host".
-- **Session exits while its picker row is on screen** → tapping calls
-  `attachToTerm`, which will fail server-side (unknown termId); the row is stale
-  until Refresh. (Minor; not specially handled.)
-- **Old agent, new web** → `title`/`lastActivity` just `undefined`: label falls
-  back to the shell name, idle label is `''`. Fine.
+- **Camera denied / absent** → the hint under the reticle turns amber and says so;
+  the key field is still there. `qr-open` is hidden entirely when
+  `navigator.mediaDevices.getUserMedia` is missing.
+- **QR from a different relay** → navigates to that origin with the key, instead
+  of failing the key against this host.
+- **Non-kremote QR in frame** → hint says "not a kremote key", scanning continues.
+- **Session dies while its Home row is on screen** → tapping it fails the attach,
+  discards the pane and repaints the list (verified).
+- **Every session gone while a terminal is open** → `syncTerms` sends you Home.
+- **Old agent, new web** → `title`/`lastActivity` undefined: the row falls back to
+  the shell name with no idle label.
 
 ## Warnings
 
-- **Do NOT re-introduce auto-attach** in `syncTerms()` for un-tabbed sessions —
-  that regression is the whole point of this change.
-- `npm install` (plain) triggers node-pty's blocked native scripts (see memory
-  `kremote-node-pty-install`). This feature added **no deps**, so you shouldn't
-  need to install anything.
-- Windows line endings: `git` warns "LF will be replaced by CRLF" on add — cosmetic.
-- Deploy is unchanged from the previous batch: agent + web rebuild from git, relay
-  untouched. Port 8787 is taken locally (memory) — use a spare port for local runs.
+- **Do NOT re-introduce auto-attach or auto-spawn.** Closing the last session
+  returns to Home; it must not open a replacement pty.
+- `closePane` is for killing a pty; `discardPane` is for dropping a local pane
+  only. Don't conflate them.
+- The web workspace has **no tsconfig** — `npm run typecheck` does not cover it,
+  and vite/esbuild strips types without checking. To type-check it, write a
+  throwaway `tsconfig` with `lib: ["es2023","dom"]`; expect pre-existing noise
+  from missing `vite/client` types (css imports, `import.meta.env`).
+- `npm install` (plain) triggers node-pty's blocked native scripts (memory
+  `kremote-node-pty-install`). `jsqr` went in with `--ignore-scripts`, which left
+  `node_modules/node-pty/build/Release/*.node` intact.
+- Port 8787 is the usual local relay. Test stacks in this session used 8899.

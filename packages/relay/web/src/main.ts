@@ -24,27 +24,33 @@ import {
   biolockSupported, biolockEnabled, enableBiolock, disableBiolock, unlockSession,
 } from './biolock';
 import { TailView } from './tailview';
+import { cameraSupported, startQrScan, parseQrPayload, type QrScanner } from './qrscan';
 
-// One WS to the relay; multiple terminal tabs multiplexed over it by termId.
-// Views: Terminals | Files | Git — switched by the header buttons.
+// One WS to the relay; multiple terminals multiplexed over it by termId.
+//
+// Two levels of navigation:
+//   Home / Files / Git / Logs — the browsing screens, sharing the top bar.
+//   Terminal                  — a full-bleed screen for ONE session, entered by
+//                               tapping a row on Home and left via its ‹ back.
+// A session is therefore never a pane: the pane stays alive in the background
+// (scrollback intact) and Home is the only session switcher.
 
-interface Tab {
+interface Pane {
   termId: string;
   name: string;
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
-  host: HTMLElement;
-  tabEl: HTMLElement;
-  labelEl: HTMLElement;   // the tab's text label (tracks the running program)
-  titleEl: HTMLElement;   // window titlebar text
-  badgeEl: HTMLElement;   // window "live"/"exited" badge
+  host: HTMLElement;      // the xterm container inside #term-stack
   shellName: string;      // e.g. "powershell"
   cwd: string;            // working directory of the pty
   program: string;        // running program surfaced via OSC title, else shellName
   dead: boolean;
+  badge: BadgeState;      // painted into the terminal bar while this pane is open
   watch: CommandWatch;    // "command finished" detection for notifications
 }
+
+type BadgeState = 'live' | 'exited' | 'reconnecting';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -53,18 +59,18 @@ const appScreen = $('app');
 const loginForm = $('login-form') as HTMLFormElement;
 const accessKeyInput = $('access-key') as HTMLInputElement;
 const loginError = $('login-error');
-const tabsEl = $('tabs');
-const terminalsEl = $('terminals');
-const newTabBtn = $('new-tab');
+const termStack = $('term-stack');
+const termTitle = $('term-title');
+const termBadge = $('term-badge');
 const connState = $('conn-state');
 
-let tabs: Tab[] = [];
-let active: Tab | null = null;
+let panes: Pane[] = [];
+let active: Pane | null = null;
 let reqSeq = 0;
 
 // ── Session persistence + silent reconnect ─────────────────────────────
 // The relay hands us a durable session token on login; we keep it so a dropped
-// socket (network blip, laptop sleep, tab reopen) reconnects without a fresh
+// socket (network blip, laptop sleep, pane reopen) reconnects without a fresh
 // ACCESS_KEY. Terminals outlive the socket on the agent, so we reattach them.
 const SESSION_KEY = 'kremote.session';
 let sessionToken: string | null = readStoredSession();
@@ -85,9 +91,17 @@ function storeSession(token: string | null): void {
 }
 
 // ── View switching ─────────────────────────────────────────────────────
-const VIEWS = ['terminals', 'files', 'git', 'tail'] as const;
+// 'term' is a screen rather than a tab: it hides the top bar entirely (CSS keys
+// off #app[data-view]) so the pty gets the full viewport, and it is reachable
+// only by opening a session from Home.
+const NAV_VIEWS = ['home', 'files', 'git', 'tail'] as const;
+const VIEWS = [...NAV_VIEWS, 'term'] as const;
 type ViewName = (typeof VIEWS)[number];
-let currentView: ViewName = 'terminals';
+let currentView: ViewName = 'home';
+
+const VIEW_ELEMENT: Record<ViewName, string> = {
+  home: 'home', files: 'files', git: 'git', tail: 'tail', term: 'terminals',
+};
 
 let fileTree: FileTree | null = null;
 let gitPanel: GitPanel | null = null;
@@ -95,20 +109,15 @@ let tailView: TailView | null = null;
 
 function switchView(name: ViewName): void {
   currentView = name;
-  for (const v of VIEWS) {
-    const el = $(v);
-    el.hidden = v !== name;
-  }
+  for (const v of VIEWS) $(VIEW_ELEMENT[v]).hidden = v !== name;
   for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
     btn.classList.toggle('active', btn.dataset.view === name);
   }
-  // Mobile CSS keys off this to drop the tab row on non-terminal views.
+  // CSS keys off this to drop the top bar / mobile keys per screen.
   appScreen.dataset.view = name;
   // Fit the terminal when switching back to it (layout may have changed).
-  if (name === 'terminals' && active) fitSoon(active);
-  // Mobile keys only matter for the terminal view.
-  const mk = document.getElementById('mobile-keys');
-  if (mk) mk.style.display = name === 'terminals' ? '' : 'none';
+  if (name === 'term' && active) fitSoon(active);
+  if (name === 'home') void refreshSessions();
   if (name === 'files' && fileTree) fileTree.refresh();
   if (name === 'git' && gitPanel) gitPanel.refresh();
   if (name === 'tail' && !tailView) tailView = new TailView($('tail-panel'));
@@ -117,8 +126,14 @@ function switchView(name: ViewName): void {
 for (const btn of document.querySelectorAll<HTMLButtonElement>('.view-btn')) {
   btn.addEventListener('click', () => {
     const name = btn.dataset.view as ViewName;
-    if (VIEWS.includes(name)) switchView(name);
+    if ((NAV_VIEWS as readonly string[]).includes(name)) switchView(name);
   });
+}
+
+/** Bring a session's pane to the front and enter the full-screen terminal. */
+function openPane(pane: Pane): void {
+  activate(pane);
+  switchView('term');
 }
 
 // ── Hello / connection lifecycle ───────────────────────────────────────
@@ -184,6 +199,7 @@ function showLogin(msg: string): void {
 }
 
 function showApp(): void {
+  closeQrScan();   // a QR login leaves the camera running otherwise
   loginScreen.hidden = true;
   appScreen.hidden = false;
   if (!fileTree) {
@@ -192,7 +208,7 @@ function showApp(): void {
   if (!gitPanel) {
     gitPanel = new GitPanel($('git-panel'));
   }
-  switchView('terminals');
+  switchView('home');
 }
 
 // CodeMirror arrives on demand: the first file click fetches the editor chunk.
@@ -221,30 +237,30 @@ onFrame('peer.back', () => {
   void syncTerms();
 });
 
-// ── Terminal tabs ──────────────────────────────────────────────────────
+// ── Terminal panes ──────────────────────────────────────────────────────
 onFrame('term.data', (f) => {
-  const tab = byTermId(f.termId);
-  if (!tab) return;
+  const pane = byTermId(f.termId);
+  if (!pane) return;
   // Windows cls/clear never erases the scrollback (see clear.ts) — append a
   // real ESC[3J when a clear shape passes so the screen is genuinely empty.
-  tab.term.write(f.data + (looksLikeClear(f.data) ? '\x1b[3J' : ''));
-  tab.watch.onOutput();
+  pane.term.write(f.data + (looksLikeClear(f.data) ? '\x1b[3J' : ''));
+  pane.watch.onOutput();
 });
 
 onFrame('term.exit', (f) => {
-  const tab = byTermId(f.termId);
-  if (tab) {
-    markDead(tab);
-    tab.term.write(`\r\n\x1b[90m[process exited${f.code != null ? ` code ${f.code}` : ''}]\x1b[0m\r\n`);
+  const pane = byTermId(f.termId);
+  if (pane) {
+    markDead(pane);
+    pane.term.write(`\r\n\x1b[90m[process exited${f.code != null ? ` code ${f.code}` : ''}]\x1b[0m\r\n`);
   }
 });
 
-function byTermId(termId: string): Tab | undefined {
-  return tabs.find(t => t.termId === termId);
+function byTermId(termId: string): Pane | undefined {
+  return panes.find(t => t.termId === termId);
 }
 
 function markAllDead(reason: string): void {
-  for (const t of tabs) {
+  for (const t of panes) {
     if (!t.dead) {
       markDead(t);
       t.term.write(`\r\n\x1b[33m[${reason}]\x1b[0m\r\n`);
@@ -253,36 +269,42 @@ function markAllDead(reason: string): void {
 }
 
 // The socket dropped but the agent (and its terminals) may still be alive —
-// show a soft "reconnecting" state instead of killing the tabs.
+// show a soft "reconnecting" state instead of killing the panes.
 function markAllReconnecting(): void {
-  for (const t of tabs) if (!t.dead) setBadge(t, 'reconnecting');
+  for (const t of panes) if (!t.dead) setBadge(t, 'reconnecting');
 }
 
-function reviveTab(tab: Tab): void {
-  tab.dead = false;
-  tab.tabEl.classList.remove('dead');
-  setBadge(tab, 'live');
+function revivePane(pane: Pane): void {
+  pane.dead = false;
+  setBadge(pane, 'live');
 }
 
-function markDead(tab: Tab): void {
-  tab.dead = true;
-  tab.tabEl.classList.add('dead');
-  setBadge(tab, 'exited');
+function markDead(pane: Pane): void {
+  pane.dead = true;
+  setBadge(pane, 'exited');
 }
 
-function setBadge(tab: Tab, state: 'live' | 'exited' | 'reconnecting'): void {
-  tab.badgeEl.classList.remove('live', 'exited', 'reconnecting');
-  tab.badgeEl.classList.add(state);
-  tab.badgeEl.textContent = state === 'reconnecting' ? 'reconnecting' : state;
+function setBadge(pane: Pane, state: BadgeState): void {
+  pane.badge = state;
+  if (pane === active) renderTermBar();
 }
 
-// ── Terminal window title ──────────────────────────────────────────────
-// Reference: "claude-code — kremote ~/project · • live". The program segment
-// tracks the running foreground program (via OSC title); the path stays put.
-function renderTitle(tab: Tab): void {
-  const prog = tab.program || tab.shellName || 'shell';
-  const where = cwdTail(tab.cwd);
-  tab.titleEl.textContent = where ? `${prog} — kremote ${where}` : `${prog} — kremote`;
+// ── Terminal bar ───────────────────────────────────────────────────────
+// One shared bar for whichever session is open, replacing the old per-tab window
+// chrome. Reads "claude — ~/project" plus the live/exited badge; the program
+// segment tracks the running foreground program (via OSC title).
+function renderTermBar(): void {
+  if (!active) { termTitle.textContent = ''; return; }
+  const prog = active.program || active.shellName || 'shell';
+  const where = cwdTail(active.cwd);
+  termTitle.textContent = where ? `${prog} — ${where}` : prog;
+  termBadge.className = `term-badge ${active.badge}`;
+  termBadge.textContent = active.badge;
+}
+
+/** Refresh the bar only when this pane is the one on screen. */
+function renderTitle(pane: Pane): void {
+  if (pane === active) renderTermBar();
 }
 
 function shellBaseName(shell: string): string {
@@ -313,10 +335,11 @@ function programFromTitle(raw: string, shellName: string): string {
   return first.slice(0, 32);
 }
 
-// Build a terminal tab (xterm + window chrome + tab button) without binding it
-// to a pty yet. newTab() opens a fresh pty; attachToTerm() rebinds to one that
-// survived a reconnect.
-function createTab(initialLabel: string): Tab {
+// Build a terminal pane (a bare, full-bleed xterm) without binding it to a pty
+// yet. newSession() opens a fresh pty; attachToTerm() rebinds to one that
+// survived a reconnect. Panes stack in #term-stack and only the active one is
+// visible — the rest keep their scrollback for when Home reopens them.
+function createPane(initialLabel: string): Pane {
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, Consolas, "Cascadia Mono", monospace',
     fontSize: termSettings.fontSize,
@@ -330,98 +353,60 @@ function createTab(initialLabel: string): Tab {
   const search = new SearchAddon();
   term.loadAddon(search);
 
-  // Window chrome: a macOS-style frame (traffic lights · title · live badge)
-  // wrapping the xterm screen — matches the docs/images reference.
   const host = document.createElement('div');
   host.className = 'term-host';
   host.hidden = true;
-  const win = document.createElement('div');
-  win.className = 'term-window';
-  const bar = document.createElement('div');
-  bar.className = 'term-titlebar';
-  const lights = document.createElement('div');
-  lights.className = 'term-lights';
-  lights.innerHTML = '<span class="l l-r"></span><span class="l l-y"></span><span class="l l-g"></span>';
-  const title = document.createElement('div');
-  title.className = 'term-title';
-  const badge = document.createElement('span');
-  badge.className = 'term-badge live';
-  badge.textContent = 'live';
-  bar.append(lights, title, badge);
-  const screen = document.createElement('div');
-  screen.className = 'term-screen';
-  win.append(bar, screen);
-  host.appendChild(win);
-  terminalsEl.appendChild(host);
-  term.open(screen);
-  // Tag the xterm root so the light-theme chrome rule applies to new tabs too.
+  termStack.appendChild(host);
+  term.open(host);
+  // Tag the xterm root so the light-theme chrome rule applies to new panes too.
   term.element?.classList.toggle('xterm-light', termSettings.theme === 'light');
 
-  const tabEl = document.createElement('div');
-  tabEl.className = 'tab';
-  const label = document.createElement('span');
-  label.textContent = initialLabel;
-  const x = document.createElement('button');
-  x.className = 'x';
-  x.textContent = '×';
-  tabEl.append(label, x);
-  tabsEl.appendChild(tabEl);
-
-  const tab: Tab = {
-    termId: '', name: label.textContent!, term, fit, search, host, tabEl,
-    labelEl: label, titleEl: title, badgeEl: badge,
-    shellName: 'shell', cwd: '', program: '', dead: false,
-    watch: new CommandWatch(() => onCommandDone(tab)),
+  const pane: Pane = {
+    termId: '', name: initialLabel, term, fit, search, host,
+    shellName: 'shell', cwd: '', program: '', dead: false, badge: 'live',
+    watch: new CommandWatch(() => onCommandDone(pane)),
   };
-  tabs.push(tab);
-  renderTitle(tab);
+  panes.push(pane);
 
   // Programs (claude-code, harness, npm…) announce themselves via the OSC
-  // title sequence — surface it in the window title and the tab label.
+  // title sequence — surface it in the terminal bar and the Home row.
   term.onTitleChange((t) => {
-    const prog = programFromTitle(t, tab.shellName);
+    const prog = programFromTitle(t, pane.shellName);
     if (prog) {
-      tab.program = prog;
-      tab.labelEl.textContent = prog;
-      tab.name = prog;
+      pane.program = prog;
+      pane.name = prog;
     }
-    renderTitle(tab);
+    renderTitle(pane);
   });
-
-  tabEl.addEventListener('click', (e) => {
-    if (e.target === x) return;
-    activate(tab);
-  });
-  x.addEventListener('click', () => closeTab(tab));
 
   term.onData((data) => {
-    if (!tab.dead && tab.termId) sendInput(tab, data);
+    if (!pane.dead && pane.termId) sendInput(pane, data);
   });
 
-  activate(tab);
-  fitSoon(tab);
-  return tab;
+  activate(pane);
+  fitSoon(pane);
+  return pane;
 }
 
 // Single choke point for everything typed into a terminal: forward to the pty,
 // let the command watcher know a line went out, and record it in history.
 // Input arrives as arbitrary chunks (per-keypress on desktop, whole lines from
-// the composer/CDP paste path), so we accumulate a pending line per tab and
+// the composer/CDP paste path), so we accumulate a pending line per pane and
 // record it when its CR arrives.
-const pendingLine = new Map<Tab, string>();
+const pendingLine = new Map<Pane, string>();
 
-function sendInput(tab: Tab, data: string): void {
-  send({ type: 'term.input', termId: tab.termId, data });
+function sendInput(pane: Pane, data: string): void {
+  send({ type: 'term.input', termId: pane.termId, data });
   if (!data) return;
-  const buf = (pendingLine.get(tab) ?? '') + data;
+  const buf = (pendingLine.get(pane) ?? '') + data;
   const crIdx = buf.indexOf('\r');
   if (crIdx === -1) {
-    pendingLine.set(tab, buf.slice(-4096)); // guard against unbounded growth
+    pendingLine.set(pane, buf.slice(-4096)); // guard against unbounded growth
     return;
   }
-  tab.watch.onSubmit();
+  pane.watch.onSubmit();
   recordHistoryLine(buf.slice(0, crIdx));
-  pendingLine.delete(tab);
+  pendingLine.delete(pane);
 }
 
 function recordHistoryLine(raw: string): void {
@@ -430,147 +415,169 @@ function recordHistoryLine(raw: string): void {
 }
 
 // A watched command just finished (output ran ≥ RUN_MIN then went quiet).
-// Notify only when it's useful: the page is hidden or another tab is focused.
-function onCommandDone(tab: Tab): void {
-  if (!tab.watch.consumeDone()) return;
+// Notify only when it's useful: the page is hidden or another pane is focused.
+function onCommandDone(pane: Pane): void {
+  if (!pane.watch.consumeDone()) return;
   if (!readPref()) return;
-  if (!shouldNotify(active === tab)) return;
+  if (!shouldNotify(active === pane)) return;
   showFinishedNotification({
-    title: `${tab.program || tab.shellName} — command finished`,
-    body: `${tab.name} · ${cwdTail(tab.cwd) || 'kremote'}`,
+    title: `${pane.program || pane.shellName} — command finished`,
+    body: `${pane.name} · ${cwdTail(pane.cwd) || 'kremote'}`,
     onClick: () => {
       window.focus();
-      switchView('terminals');
-      activate(tab);
+      openPane(pane);
     },
   });
 }
 
-async function newTab(): Promise<void> {
+async function newSession(): Promise<void> {
   if (!isConnected()) return;
-  const tab = createTab(`Session ${tabs.length + 1}`);
+  const pane = createPane(`Session ${panes.length + 1}`);
+  openPane(pane);
   try {
     const res = await rpc<{ ok: boolean; termId?: string; error?: string; cwd?: string; shell?: string }>(
-      { type: 'term.open', cols: tab.term.cols, rows: tab.term.rows });
+      { type: 'term.open', cols: pane.term.cols, rows: pane.term.rows });
     if (res.ok && res.termId) {
-      tab.termId = res.termId;
-      tab.cwd = res.cwd ?? '';
-      tab.shellName = shellBaseName(res.shell ?? '');
-      if (!tab.program) tab.program = tab.shellName;
-      renderTitle(tab);
-      sendResize(tab);
+      pane.termId = res.termId;
+      pane.cwd = res.cwd ?? '';
+      pane.shellName = shellBaseName(res.shell ?? '');
+      if (!pane.program) pane.program = pane.shellName;
+      renderTitle(pane);
+      sendResize(pane);
     } else {
       console.error('term.open failed:', res.error);
-      closeTab(tab, true);
+      closePane(pane, true);
     }
   } catch (e) {
     console.error('term.open timed out:', e);
-    closeTab(tab, true);
+    closePane(pane, true);
   }
 }
 
 // Rebind to a terminal that outlived the socket: replay its scrollback into a
-// fresh (or the matching existing) tab. Reuses `existing` on a live-socket blip
-// so we don't spawn duplicate tabs for the same termId.
-async function attachToTerm(info: { termId: string; shell: string; cwd: string }, existing?: Tab): Promise<void> {
-  const tab = existing ?? createTab(shellBaseName(info.shell));
-  tab.termId = info.termId;
-  reviveTab(tab);
+// fresh (or the matching existing) pane. Reuses `existing` on a live-socket blip
+// so we don't spawn duplicate panes for the same termId. Resolves false when the
+// agent no longer has that pty — Home rows can go stale between polls, and
+// landing on a blank dead terminal explains nothing.
+async function attachToTerm(
+  info: { termId: string; shell: string; cwd: string }, existing?: Pane,
+): Promise<boolean> {
+  const pane = existing ?? createPane(shellBaseName(info.shell));
+  pane.termId = info.termId;
+  revivePane(pane);
   try {
     const res = await rpc<{ ok: boolean; data?: string; cwd?: string; shell?: string; error?: string }>(
-      { type: 'term.attach', termId: info.termId, cols: tab.term.cols, rows: tab.term.rows });
+      { type: 'term.attach', termId: info.termId, cols: pane.term.cols, rows: pane.term.rows });
     if (res.ok) {
-      tab.term.reset();
-      if (res.data) tab.term.write(res.data);
-      tab.cwd = res.cwd ?? info.cwd;
-      tab.shellName = shellBaseName(res.shell ?? info.shell);
-      if (!tab.program) tab.program = tab.shellName;
-      renderTitle(tab);
-      sendResize(tab);
-    } else {
-      markDead(tab);
+      pane.term.reset();
+      if (res.data) pane.term.write(res.data);
+      pane.cwd = res.cwd ?? info.cwd;
+      pane.shellName = shellBaseName(res.shell ?? info.shell);
+      if (!pane.program) pane.program = pane.shellName;
+      renderTitle(pane);
+      sendResize(pane);
+      return true;
     }
+    console.error('term.attach rejected:', res.error);
   } catch (e) {
     console.error('term.attach failed:', e);
-    markDead(tab);
   }
+  // A pane we just built for this attach has nothing to show — drop it rather
+  // than leave an empty husk. One that already existed keeps its scrollback and
+  // just goes dead, as it would on any other exit.
+  if (existing) markDead(pane);
+  else discardPane(pane);
+  return false;
 }
 
-// On (re)connect, reconcile our tabs with the agent's live terminals: reattach
-// the ones still running, mark the vanished ones exited, and — on a truly fresh
-// session with nothing running — open a first terminal.
+/** Tear down a pane locally, without asking the agent to kill anything. */
+function discardPane(pane: Pane): void {
+  panes = panes.filter(p => p !== pane);
+  pendingLine.delete(pane);
+  pane.term.dispose();
+  pane.host.remove();
+  if (active === pane) { active = null; renderTermBar(); }
+}
+
+// On (re)connect, reconcile our panes with the agent's live terminals: reattach
+// the ones still running and mark the vanished ones exited. Sessions with no
+// local pane — ones started on another device — are never auto-opened; they show
+// up on Home for the user to pick.
 async function syncTerms(): Promise<void> {
-  let live: { termId: string; shell: string; cwd: string }[];
+  let live: SessionInfo[];
   try {
-    const res = await rpc<{ terms?: { termId: string; shell: string; cwd: string }[] }>({ type: 'term.list' });
+    const res = await rpc<{ terms?: SessionInfo[] }>({ type: 'term.list' });
     live = res.terms ?? [];
   } catch {
     return; // socket died mid-list; onClosed will drive another reconnect
   }
+  lastSessions = live;
   const liveIds = new Set(live.map(t => t.termId));
-  for (const tab of [...tabs]) {
-    if (tab.termId && !liveIds.has(tab.termId)) markDead(tab);
+  for (const pane of [...panes]) {
+    if (pane.termId && !liveIds.has(pane.termId)) markDead(pane);
   }
   // Silently revive only the terminals THIS browser already owns (a reconnect or
-  // peer.back). Live sessions with no local tab — ones opened on another device —
-  // are NOT auto-spawned as tabs; they're offered in the session picker instead.
+  // peer.back) — a phone waking up must land back where it was, not on a picker.
   for (const info of live) {
     const existing = byTermId(info.termId);
     if (existing) await attachToTerm(info, existing);
   }
-  if (tabs.some(t => !t.dead)) return;      // already landed on a live tab
-  const untabbed = live.filter(info => !byTermId(info.termId));
-  if (untabbed.length) {
-    // Sessions are running elsewhere — let the user pick which to attach rather
-    // than dumping every one into a tab (noise on a phone).
-    openSessions();
-  } else {
-    // Nothing running anywhere — open a fresh terminal so the user isn't
-    // stranded on a dead prompt having to click "+".
-    void newTab();
-  }
+  // Repaint wherever the user already is. A reconnect must never yank them off
+  // Files/Git/Logs, and a silently revived terminal is exactly where they left
+  // off — Home is only the fallback for a terminal screen with nothing behind it
+  // (and the landing view on a fresh connect, via showApp).
+  if (currentView === 'term' && (!active || active.dead)) switchView('home');
+  else if (currentView === 'term') renderTermBar();
+  else if (currentView === 'home') renderSessions(live);
 }
 
-function activate(tab: Tab): void {
-  active = tab;
-  for (const t of tabs) {
-    t.tabEl.classList.toggle('active', t === tab);
-    t.host.hidden = t !== tab;
-  }
-  fitSoon(tab);
-  tab.term.focus();
+function activate(pane: Pane): void {
+  active = pane;
+  for (const t of panes) t.host.hidden = t !== pane;
+  renderTermBar();
+  fitSoon(pane);
+  pane.term.focus();
 }
 
 let fitTimer: number | undefined;
-function fitSoon(tab: Tab): void {
+function fitSoon(pane: Pane): void {
   clearTimeout(fitTimer);
   fitTimer = window.setTimeout(() => {
     try {
-      tab.fit.fit();
-      sendResize(tab);
+      pane.fit.fit();
+      sendResize(pane);
     } catch { /* detached */ }
   }, 30);
 }
 
-function sendResize(tab: Tab): void {
-  if (!tab.dead && tab.termId) {
-    send({ type: 'term.resize', termId: tab.termId, cols: tab.term.cols, rows: tab.term.rows });
+function sendResize(pane: Pane): void {
+  if (!pane.dead && pane.termId) {
+    send({ type: 'term.resize', termId: pane.termId, cols: pane.term.cols, rows: pane.term.rows });
   }
 }
 
-function closeTab(tab: Tab, skipServer = false): void {
-  if (!skipServer && tab.termId && !tab.dead) {
-    send({ type: 'term.close', id: `close${++reqSeq}`, termId: tab.termId });
+// Drop the pane (and, unless `skipServer`, kill the pty behind it). There is no
+// "next tab" to fall back to any more — closing the open session returns Home,
+// which is also where the freshly-updated session list lives.
+function closePane(pane: Pane, skipServer = false): void {
+  if (!skipServer && pane.termId && !pane.dead) {
+    send({ type: 'term.close', id: `close${++reqSeq}`, termId: pane.termId });
   }
-  tabs = tabs.filter(t => t !== tab);
-  tab.term.dispose();
-  tab.host.remove();
-  tab.tabEl.remove();
-  if (active === tab) activate(tabs[tabs.length - 1] ?? null!);
-  if (tabs.length === 0 && isConnected()) void newTab();
+  panes = panes.filter(t => t !== pane);
+  pendingLine.delete(pane);
+  pane.term.dispose();
+  pane.host.remove();
+  if (active === pane) {
+    active = null;
+    renderTermBar();
+  }
+  if (currentView === 'term') switchView('home');
+  else void refreshSessions();
 }
 
-newTabBtn.addEventListener('click', () => void newTab());
+$('new-session').addEventListener('click', () => void newSession());
+$('term-back').addEventListener('click', () => switchView('home'));
+$('term-kill').addEventListener('click', () => { if (active) closePane(active); });
 
 // ── ••• overflow menu ──────────────────────────────────────────────────
 // Consolidates the secondary header actions (history, search, notifications,
@@ -596,7 +603,6 @@ moreMenu.addEventListener('click', (e) => {
   if (!item || item.hasAttribute('disabled')) return;
   closeMoreMenu();
   switch (item.dataset.act) {
-    case 'sessions': openSessions(); break;
     case 'history': openHistory(); break;
     case 'search': openTermSearch(); break;
     case 'settings': openSettings(); break;
@@ -639,6 +645,58 @@ loginForm.addEventListener('submit', (e) => {
   startConnect({ accessKey: key });
   setTimeout(() => loginForm.querySelector('button')!.removeAttribute('disabled'), 1500);
 });
+
+// ── QR login ────────────────────────────────────────────────────────────
+// The agent prints a QR of `https://relay/?key=…`. A phone browser can scan it
+// with the system camera, but an *installed* PWA has no address bar to hand the
+// URL to — so it scans in-app and logs straight in.
+const qrOverlay = $('qr-scan');
+const qrVideo = $('qr-video') as HTMLVideoElement;
+const qrHint = $('qr-hint');
+const qrOpenBtn = $('qr-open');
+
+let scanner: QrScanner | null = null;
+
+if (!cameraSupported()) qrOpenBtn.hidden = true;
+
+function closeQrScan(): void {
+  scanner?.stop();
+  scanner = null;
+  qrOverlay.hidden = true;
+}
+
+async function openQrScan(): Promise<void> {
+  if (scanner) return;
+  qrOverlay.hidden = false;
+  qrHint.classList.remove('error');
+  qrHint.textContent = 'Point at the QR code printed by the agent';
+  scanner = await startQrScan(qrVideo, onQrText, (msg) => {
+    qrHint.classList.add('error');
+    qrHint.textContent = msg;
+  });
+}
+
+function onQrText(raw: string): void {
+  const hit = parseQrPayload(raw);
+  if (!hit) {
+    // Keep scanning: the camera may just have caught some other QR in frame.
+    qrHint.classList.add('error');
+    qrHint.textContent = 'That QR is not a kremote key — keep pointing.';
+    return;
+  }
+  closeQrScan();
+  // A QR minted by a *different* relay only works on that origin, so follow it
+  // rather than failing the key against this host.
+  if (hit.origin && hit.origin !== location.origin) {
+    location.href = `${hit.origin}/?key=${encodeURIComponent(hit.key)}`;
+    return;
+  }
+  accessKeyInput.value = hit.key;
+  loginForm.requestSubmit();
+}
+
+qrOpenBtn.addEventListener('click', () => void openQrScan());
+$('qr-close').addEventListener('click', closeQrScan);
 
 // ── Mobile text composer (Vietnamese/IME-friendly input) ────────────────
 // xterm's hidden textarea mangles mobile IME composition (Gboard Telex, VNI):
@@ -691,8 +749,8 @@ mobileKeys.addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest('button');
   if (!btn || btn.id === 'composer-toggle') return; // composer handles itself
 
-  // Actions (#4 paste/copy, #6 search) work off the active tab's buffer, so
-  // they run even for a dead tab (search) — handle them before the live guard.
+  // Actions (#4 paste/copy, #6 search) work off the active pane's buffer, so
+  // they run even for a dead pane (search) — handle them before the live guard.
   const act = btn.getAttribute('data-act');
   if (act === 'search') { openTermSearch(); return; }
   if (act === 'copy') { copyActiveSelection(btn); return; }
@@ -741,13 +799,14 @@ function unescapeSeq(s: string): string {
 
 // ── Scrollback search (#6) ──────────────────────────────────────────────
 // A floating bar over the terminal window, driven by xterm's SearchAddon on
-// the *active* tab. Typing jumps to the next match; ↑/↓ (or Shift+Enter/Enter)
+// the *active* pane. Typing jumps to the next match; ↑/↓ (or Shift+Enter/Enter)
 // cycle; Esc/✕ closes and returns focus to the terminal.
 const termSearch = $('term-search');
 const termSearchInput = $('term-search-input') as HTMLInputElement;
 
 function openTermSearch(): void {
-  switchView('terminals');
+  if (!active) return;   // nothing to search without an open session
+  switchView('term');
   termSearch.hidden = false;
   termSearchInput.focus();
   termSearchInput.select();
@@ -802,17 +861,17 @@ applySettingsToTabs();
 
 function applySettingsToTabs(): void {
   const light = termSettings.theme === 'light';
-  for (const t of tabs) {
+  for (const t of panes) {
     t.term.options.fontSize = termSettings.fontSize;
     (t.term.options as any).theme = { ...TERM_THEMES[termSettings.theme] };
     // Softens the window chrome (titlebar) around a light terminal — see the
     // `.term-window:has(.xterm-light)` rule in style.css.
     t.term.element?.classList.toggle('xterm-light', light);
   }
-  // Only the active tab is visible; xterm can't measure a display:none host, so
-  // fitting hidden tabs is both wrong and pointless (they refit on activate()).
-  // Looping fitSoon() over every tab would also clobber its shared timer and
-  // leave the active tab unfitted after a font change.
+  // Only the active pane is visible; xterm can't measure a display:none host, so
+  // fitting hidden panes is both wrong and pointless (they refit on activate()).
+  // Looping fitSoon() over every pane would also clobber its shared timer and
+  // leave the active pane unfitted after a font change.
   if (active) fitSoon(active);
 }
 
@@ -901,7 +960,7 @@ function makeHistoryRow(line: string): HTMLElement {
   send.title = 'Tap to send to the active terminal';
   send.addEventListener('click', () => {
     if (active && !active.dead && active.termId) {
-      switchView('terminals');
+      switchView('term');
       sendInput(active, line + '\r');
     }
     historyDrawer.hidden = true;
@@ -946,16 +1005,19 @@ $('history-clear').addEventListener('click', () => {
 });
 $('history-close').addEventListener('click', () => { historyDrawer.hidden = true; });
 
-// ── Sessions picker ─────────────────────────────────────────────────────
-// Lists every live pty on the host (via term.list) so you can see and attach
-// the sessions you left running — even from a device that never opened them.
-// Each row shows the running program (from the pty's OSC title), its cwd, and
-// how long it's been idle. Tapping attaches (replaying scrollback) or focuses
-// the tab if it's already open here.
-const sessionsDrawer = $('sessions-drawer');
+// ── Home: the session list ──────────────────────────────────────────────
+// Every live pty on the host (via term.list), so you can see and attach the
+// sessions you left running — even from a device that never opened them. Each
+// row shows the running program (from the pty's OSC title), its cwd and how long
+// it has been idle. Tapping opens the full-screen terminal for it: focusing the
+// pane if this browser already has one, otherwise attaching and replaying the
+// scrollback.
 const sessionsList = $('sessions-list');
 
 type SessionInfo = { termId: string; shell: string; cwd: string; title?: string; lastActivity?: number };
+
+/** Last list we rendered, so a local kill can repaint without a round-trip. */
+let lastSessions: SessionInfo[] = [];
 
 function idleLabel(lastActivity?: number): string {
   if (!lastActivity) return '';
@@ -969,12 +1031,19 @@ function idleLabel(lastActivity?: number): string {
 }
 
 function makeSessionRow(info: SessionInfo): HTMLElement {
-  const row = document.createElement('button');
+  const row = document.createElement('div');
   row.className = 'session-row';
 
   const shellName = shellBaseName(info.shell);
-  const prog = (info.title && programFromTitle(info.title, shellName)) || shellName;
-  const openHere = byTermId(info.termId) !== undefined;
+  const existing = byTermId(info.termId);
+  // A pane already open here knows the live program from xterm's own title
+  // events; for the rest the agent's captured OSC title is the only source.
+  const prog = existing?.program
+    || (info.title && programFromTitle(info.title, shellName))
+    || shellName;
+
+  const open = document.createElement('button');
+  open.className = 'session-open';
 
   const name = document.createElement('span');
   name.className = 'session-name';
@@ -983,50 +1052,75 @@ function makeSessionRow(info: SessionInfo): HTMLElement {
   const meta = document.createElement('span');
   meta.className = 'session-meta';
   const bits = [cwdTail(info.cwd) || '~', idleLabel(info.lastActivity)].filter(Boolean);
-  if (openHere) bits.push('open');
+  if (existing) bits.push('open here');
   meta.textContent = bits.join(' · ');
 
-  row.append(name, meta);
-  row.addEventListener('click', () => {
-    sessionsDrawer.hidden = true;
-    switchView('terminals');
-    const existing = byTermId(info.termId);
-    if (existing) { activate(existing); return; }
-    void attachToTerm(info);
+  open.append(name, meta);
+  open.addEventListener('click', () => {
+    const pane = byTermId(info.termId);
+    if (pane) { openPane(pane); return; }
+    open.disabled = true;   // the attach round-trips; don't stack duplicates
+    void attachToTerm(info).then((ok) => {
+      open.disabled = false;
+      const opened = byTermId(info.termId);
+      if (ok && opened) openPane(opened);
+      else void refreshSessions();   // the row was stale — repaint what is real
+    });
   });
+
+  const kill = document.createElement('button');
+  kill.className = 'session-kill';
+  kill.textContent = '✕';
+  kill.title = 'Close this session';
+  kill.setAttribute('aria-label', `Close ${prog}`);
+  kill.addEventListener('click', () => void killSession(info));
+
+  row.append(open, kill);
   return row;
 }
 
+/** Kill a pty from Home — whether or not this browser has a pane for it. */
+async function killSession(info: SessionInfo): Promise<void> {
+  const pane = byTermId(info.termId);
+  if (pane) { closePane(pane); return; }
+  send({ type: 'term.close', id: `close${++reqSeq}`, termId: info.termId });
+  lastSessions = lastSessions.filter(s => s.termId !== info.termId);
+  renderSessions(lastSessions);
+}
+
 function renderSessions(list: SessionInfo[]): void {
+  lastSessions = list;
   sessionsList.innerHTML = '';
   if (list.length === 0) {
     const el = document.createElement('div');
-    el.className = 'history-empty';
-    el.textContent = 'No live sessions on the host';
+    el.className = 'session-empty';
+    el.textContent = 'No sessions running. Start one with ＋ New session.';
     sessionsList.appendChild(el);
     return;
   }
   // Most-recently-active first.
-  list.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
-  for (const info of list) sessionsList.appendChild(makeSessionRow(info));
+  const sorted = [...list].sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+  for (const info of sorted) sessionsList.appendChild(makeSessionRow(info));
 }
 
-async function openSessions(): Promise<void> {
-  sessionsDrawer.hidden = false;
-  sessionsList.innerHTML = '<div class="history-empty">Loading…</div>';
+async function refreshSessions(): Promise<void> {
+  if (!isConnected()) { renderSessions([]); return; }
   try {
     const res = await rpc<{ terms?: SessionInfo[] }>({ type: 'term.list' });
     renderSessions(res.terms ?? []);
   } catch {
-    sessionsList.innerHTML = '<div class="history-empty">Could not load sessions</div>';
+    sessionsList.innerHTML = '<div class="session-empty">Could not load sessions</div>';
   }
 }
 
-sessionsDrawer.addEventListener('click', (e) => {
-  if (e.target === sessionsDrawer) sessionsDrawer.hidden = true;
-});
-$('sessions-refresh').addEventListener('click', () => void openSessions());
-$('sessions-close').addEventListener('click', () => { sessionsDrawer.hidden = true; });
+$('sessions-refresh').addEventListener('click', () => void refreshSessions());
+
+// While Home is on screen, re-poll so idle labels age and sessions started
+// elsewhere show up without a manual refresh. Paused everywhere else (and while
+// the page is hidden) so a backgrounded phone isn't chattering at the relay.
+window.setInterval(() => {
+  if (currentView === 'home' && !document.hidden && isConnected()) void refreshSessions();
+}, 10_000);
 
 // ── Startup: biometric gate, then the usual session/ACCESS_KEY login flow.
 // The stored session token is withheld until the platform authenticator

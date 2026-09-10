@@ -364,3 +364,47 @@ trình đang chạy**.
 - **Kiểm thử**: 90/90 test (thêm `agent/test/term.test.ts`: parseOscTitle với
   BEL/ST, OSC 0/2, null khi vắng, bỏ qua OSC 8 link; `list()` báo title +
   lastActivity sau khi pty set OSC title), typecheck + web:build sạch.
+
+### Home screen + terminal toàn màn hình + quét QR — XONG
+
+Bỏ hẳn thanh tab session. Điều hướng giờ có 2 tầng: **Home / Files / Git / Logs**
+dùng chung top bar, còn **Terminal** là một screen riêng chiếm trọn viewport.
+
+- **Home** (`#home`, thay cho view Term cũ): danh sách mọi live pty trên host
+  (`term.list`) — nhãn chương trình, `cwdTail`, nhãn idle, cờ "open here" nếu
+  browser này đã có pane. Mỗi row có nút ✕ để kill pty (kể cả session chưa mở ở
+  đây). Nút **＋ New session** nằm ngay trên đầu danh sách. Poll lại mỗi 10s khi
+  Home đang hiển thị và tab không bị ẩn (idle label tự già đi, session mở ở máy
+  khác tự xuất hiện).
+- **Terminal screen**: tap 1 row → `#terminals` với `#term-bar` mỏng (‹ back ·
+  "claude — ~/project" · badge live/exited/reconnecting · ✕ kill). Không còn
+  macOS window chrome, không view switcher, không tab strip — xterm ăn hết phần
+  còn lại. `#app[data-view="term"]` là công tắc CSS cho cả top bar lẫn
+  `#mobile-keys`/`#composer` (2 thứ này giờ chỉ hiện trên terminal screen).
+- **`Tab` → `Pane`**: pane không còn nút tab riêng; nó chỉ là 1 xterm trong
+  `#term-stack`, sống nền với nguyên scrollback. Home là bộ chuyển session duy
+  nhất. Badge/title vẽ vào thanh dùng chung khi pane đang mở.
+- **Attach thất bại không còn để lại xác**: `attachToTerm()` trả `boolean`; row
+  cũ (session đã chết giữa 2 lần poll) → pane vừa tạo bị `discardPane()`, ở lại
+  Home và repaint danh sách, thay vì rơi vào 1 terminal đen không giải thích gì.
+- **`syncTerms()`**: reconnect KHÔNG kéo người dùng khỏi Files/Git/Logs nữa. Chỉ
+  ép về Home khi đang ở terminal screen mà pane đã chết; terminal còn sống thì
+  revive im lặng tại chỗ. Vào lần connect đầu, `showApp()` đáp xuống Home.
+- **Quét QR** (`relay/web/src/qrscan.ts` + nút "Scan QR code" ở màn login): agent
+  vốn đã in QR chứa `https://relay/?key=…`, nhưng PWA đã cài thì không có address
+  bar để dán — nên app tự quét. Decoder ưu tiên `BarcodeDetector` (native,
+  Chrome/Edge); thiếu thì lazy `import('jsqr')` (chunk ~47KB gzip, chỉ tải khi
+  cần) đọc frame qua canvas đã downscale về cạnh ≤640px, 6 lần/giây.
+  `parseQrPayload()` chỉ nhận URL có `?key=` đúng dạng hoặc key trần — QR lạ bị
+  bỏ qua (không cho phép redirect tuỳ ý). QR của relay khác origin → điều hướng
+  sang chính origin đó thay vì fail key sai host.
+- **Kiểm thử**: 97/97 test (thêm `relay/web/test/qrscan.test.ts`: parseQrPayload
+  nhận URL/key trần, từ chối URL không key + key có dấu + quá dài/ngắn; round-trip
+  `qrcode` → `jsqr` ở cả scale lớn và scale nhỏ như frame camera đã downscale).
+  typecheck + web:build sạch. E2E Playwright với relay+agent thật: connect lần đầu
+  đáp xuống Home; ＋ New session → terminal full màn (top bar biến mất, xterm bắt
+  đầu ở y=46); OSC title `claude` lên cả term bar lẫn row Home; reload (thiết bị
+  "mới", 0 pane) vẫn liệt kê đủ session và attach lại replay đúng scrollback; ✕
+  trên bar và ✕ trên row đều kill đúng rồi về Home; click row đã chết → log
+  "term.attach rejected: no such terminal", không tạo pane thừa, ở lại Home; overlay
+  QR mở được camera, jsQR chunk nạp OK, đóng lại trả camera (`srcObject === null`).

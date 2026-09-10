@@ -10,7 +10,7 @@
     "packages/relay/web"
   ],
   "scripts": {
-    "test": "node --test packages/shared/test/*.test.ts packages/relay/test/*.test.ts packages/agent/test/*.test.ts",
+    "test": "node --test packages/shared/test/*.test.ts packages/relay/test/*.test.ts packages/relay/web/test/*.test.ts packages/agent/test/*.test.ts",
     "relay": "node --env-file-if-exists=.env packages/relay/src/index.ts",
     "relay:keygen": "node --env-file-if-exists=.env packages/relay/src/keygen.ts",
     "agent": "node --env-file-if-exists=.env packages/agent/src/index.ts",

@@ -29,6 +29,7 @@
              autocorrect="off" spellcheck="false" inputmode="text"
              placeholder="XXXXXXXX" maxlength="16" />
       <button type="submit">Connect</button>
+      <button type="button" id="qr-open" class="qr-open"><span aria-hidden="true">▣</span> Scan QR code</button>
       <p id="login-error" class="error" hidden></p>
       <p class="hint">
         Mint one on the host with <code>kremote keygen &lt;device&gt;</code>.
@@ -37,23 +38,30 @@
     </form>
   </div>
 
+  <!-- QR scanner overlay: camera → the QR the agent prints (a URL with ?key=). -->
+  <div id="qr-scan" hidden>
+    <video id="qr-video" playsinline muted></video>
+    <div id="qr-reticle" aria-hidden="true"></div>
+    <p id="qr-hint">Point at the QR code printed by the agent</p>
+    <button id="qr-close" aria-label="Close scanner">✕</button>
+  </div>
+
   <!-- Workspace -->
-  <div id="app" class="screen" data-view="terminals" hidden>
+  <div id="app" class="screen" data-view="home" hidden>
+    <!-- Top bar: home / files / git / logs only. The terminal screen replaces
+         it with its own slim bar so the pty gets the whole viewport. -->
     <header id="tabbar">
       <nav id="view-switcher" aria-label="View">
-        <button class="view-btn active" data-view="terminals">Term</button>
+        <button class="view-btn active" data-view="home">Home</button>
         <button class="view-btn" data-view="files">Files</button>
         <button class="view-btn" data-view="git">Git</button>
         <button class="view-btn" data-view="tail">Logs</button>
       </nav>
-      <div id="tabs" role="tablist"></div>
-      <button id="new-tab" title="New terminal" aria-label="New terminal">+</button>
       <button id="more-btn" title="More" aria-label="More actions" aria-haspopup="menu">•••</button>
       <span id="conn-state" title="Connection state" aria-hidden="true"></span>
 
       <!-- Overflow menu: secondary actions live here to keep the bar tidy. -->
       <div id="more-menu" role="menu" hidden>
-        <button class="more-item" data-act="sessions" role="menuitem">🖥&nbsp; Sessions</button>
         <button class="more-item" data-act="history" role="menuitem">⌘&nbsp; Command history</button>
         <button class="more-item" data-act="search" role="menuitem">🔍&nbsp; Search terminal</button>
         <button class="more-item" id="more-notify" data-act="notify" role="menuitem">🔔&nbsp; Notifications</button>
@@ -61,16 +69,14 @@
       </div>
     </header>
 
-    <!-- Terminals view -->
-    <main id="terminals" class="view">
-      <!-- Scrollback search (#6): floats over the active terminal window. -->
-      <div id="term-search" hidden>
-        <input id="term-search-input" type="search" placeholder="Search output…"
-               autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button id="term-search-prev" title="Previous match" aria-label="Previous match">↑</button>
-        <button id="term-search-next" title="Next match" aria-label="Next match">↓</button>
-        <button id="term-search-close" title="Close" aria-label="Close search">✕</button>
+    <!-- Home view: live sessions on the host + "new session". -->
+    <main id="home" class="view">
+      <div class="home-head">
+        <span class="home-title">Sessions</span>
+        <button id="sessions-refresh" class="home-ghost" title="Refresh" aria-label="Refresh">↻</button>
+        <button id="new-session" class="home-cta">＋ New session</button>
       </div>
+      <div id="sessions-list" role="list"></div>
     </main>
 
     <!-- Files view -->
@@ -89,6 +95,25 @@
       <div id="tail-panel"></div>
     </main>
 
+    <!-- Terminal screen: full-bleed, no view switcher. Back returns to Home. -->
+    <main id="terminals" class="view" hidden>
+      <div id="term-bar">
+        <button id="term-back" aria-label="Back to sessions" title="Back to sessions">‹</button>
+        <span id="term-title"></span>
+        <span id="term-badge" class="term-badge live">live</span>
+        <button id="term-kill" aria-label="Close session" title="Close session">✕</button>
+      </div>
+      <!-- Scrollback search (#6): floats over the active terminal. -->
+      <div id="term-search" hidden>
+        <input id="term-search-input" type="search" placeholder="Search output…"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button id="term-search-prev" title="Previous match" aria-label="Previous match">↑</button>
+        <button id="term-search-next" title="Next match" aria-label="Next match">↓</button>
+        <button id="term-search-close" title="Close" aria-label="Close search">✕</button>
+      </div>
+      <div id="term-stack"></div>
+    </main>
+
     <!-- Command history drawer (overlay, any view) -->
     <div id="history-drawer" hidden>
       <div class="drawer-head">
@@ -99,16 +124,6 @@
       <input id="history-search" type="search" placeholder="Search commands…" autocomplete="off" />
       <div id="history-pinned" role="list"></div>
       <div id="history-list" role="listbox"></div>
-    </div>
-
-    <!-- Sessions picker drawer: live ptys on the host, tap to attach. -->
-    <div id="sessions-drawer" hidden>
-      <div class="drawer-head">
-        <span>Sessions</span>
-        <button id="sessions-refresh" title="Refresh">Refresh</button>
-        <button id="sessions-close" title="Close">✕</button>
-      </div>
-      <div id="sessions-list" role="listbox"></div>
     </div>
 
     <!-- Settings popover -->
