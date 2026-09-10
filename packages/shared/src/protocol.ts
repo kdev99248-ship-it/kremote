@@ -20,7 +20,10 @@ export interface TermCloseRes { type: 'term.close.res'; id: string; ok: boolean 
 export interface TermListReq { type: 'term.list'; id: string }
 export interface TermListRes {
   type: 'term.list.res'; id: string;
-  terms: { termId: string; shell: string; cwd: string }[];
+  // title: last OSC window title the pty set (surfaces the running program, e.g.
+  // "claude", to a device that never opened this terminal). lastActivity: epoch
+  // ms of the last output, for an "idle 3m" label in the session picker.
+  terms: { termId: string; shell: string; cwd: string; title?: string; lastActivity?: number }[];
 }
 
 // Reattach to a terminal that outlived the browser (reconnect): the agent

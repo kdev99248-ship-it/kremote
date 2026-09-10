@@ -334,3 +334,33 @@ Bốn tính năng bổ trợ cho terminal (2 web-only, 1 full-stack, 1 web-only)
   KHÔNG notify với dòng INFO; #3 bio-lock qua CDP virtual authenticator (origin `localhost`
   vì `127.0.0.1` không phải RP ID hợp lệ) — verified thật → mở khoá + reconnect; unverified
   → chặn, xoá token, về login.
+
+### Session picker: xem & attach live terminal từ mọi thiết bị (Phase 1) — XONG
+
+Mở kremote trên điện thoại và thấy đúng session đang chạy dở trên PC. Agent giữ
+mọi pty trong RAM (256 KB scrollback) nên `term.list`/`term.attach` đã cho phép
+reattach; feature này bổ sung **overview + chọn lựa** và cho agent biết **chương
+trình đang chạy**.
+
+- **Agent** (`agent/src/term.ts`): mỗi pty theo dõi `lastActivity` (epoch ms lần
+  output cuối) và `title` — OSC window title cuối cùng (`\x1b]0;…\x07` / `]2;` /
+  kết ST). Helper `parseOscTitle()` quét chunk (giữ đuôi ~256 ký tự để bắt title
+  bị cắt giữa 2 chunk). Nhờ vậy thiết bị chưa từng mở terminal vẫn thấy "claude"
+  thay vì "pwsh".
+- **Protocol** (`shared/src/protocol.ts`): `term.list.res.terms[]` thêm
+  `title?` + `lastActivity?` (optional → tương thích ngược). Đây là edit protocol
+  duy nhất.
+- **Web** (`relay/web`): drawer `#sessions-drawer` (mở từ menu ••• → 🖥 Sessions)
+  liệt kê mỗi live pty: nhãn chương trình (từ `title`+`shell` qua
+  `programFromTitle`), `cwdTail`, nhãn idle ("active"/"idle 3m"/"idle 1h"), và
+  cờ "open" nếu tab đã mở ở đây. Tap → đã mở thì `activate`, chưa thì
+  `attachToTerm` (replay scrollback) rồi về view Term.
+- **Đổi hành vi `syncTerms()`**: thiết bị mới KHÔNG còn auto-spawn 1 tab/session.
+  Tab mà chính browser này sở hữu vẫn revive im lặng (reconnect/`peer.back` không
+  đổi); session chạy ở nơi khác được mời trong picker. Không có gì chạy → mở 1 tab
+  mới như cũ.
+- **Phase 2 bị bỏ**: attach vào native terminal khởi động ngoài kremote
+  (tmux/WSL) — node-pty không adopt được pty ngoại lai trên Windows.
+- **Kiểm thử**: 90/90 test (thêm `agent/test/term.test.ts`: parseOscTitle với
+  BEL/ST, OSC 0/2, null khi vắng, bỏ qua OSC 8 link; `list()` báo title +
+  lastActivity sau khi pty set OSC title), typecheck + web:build sạch.

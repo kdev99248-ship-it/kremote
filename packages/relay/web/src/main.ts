@@ -302,12 +302,12 @@ function cwdTail(cwd: string): string {
 
 // An OSC title is worth showing as the program when it isn't just a path or the
 // shell's own default. Returns '' to keep the current program label.
-function programFromTitle(raw: string, tab: Tab): string {
+function programFromTitle(raw: string, shellName: string): string {
   const t = raw.trim();
   if (!t) return '';
   // Path-like titles (PowerShell/cmd set the cwd as the title) aren't programs.
   if (/[\\/]/.test(t) || /^[a-z]:/i.test(t)) return '';
-  if (/^(windows powershell|powershell|command prompt|cmd)$/i.test(t)) return tab.shellName;
+  if (/^(windows powershell|powershell|command prompt|cmd)$/i.test(t)) return shellName;
   // Take the first token, trimmed of leading status glyphs (e.g. "✳ claude").
   const first = t.replace(/^[^\w]+/, '').split(/\s+/)[0] ?? t;
   return first.slice(0, 32);
@@ -379,7 +379,7 @@ function createTab(initialLabel: string): Tab {
   // Programs (claude-code, harness, npm…) announce themselves via the OSC
   // title sequence — surface it in the window title and the tab label.
   term.onTitleChange((t) => {
-    const prog = programFromTitle(t, tab);
+    const prog = programFromTitle(t, tab.shellName);
     if (prog) {
       tab.program = prog;
       tab.labelEl.textContent = prog;
@@ -511,13 +511,24 @@ async function syncTerms(): Promise<void> {
   for (const tab of [...tabs]) {
     if (tab.termId && !liveIds.has(tab.termId)) markDead(tab);
   }
+  // Silently revive only the terminals THIS browser already owns (a reconnect or
+  // peer.back). Live sessions with no local tab — ones opened on another device —
+  // are NOT auto-spawned as tabs; they're offered in the session picker instead.
   for (const info of live) {
-    await attachToTerm(info, byTermId(info.termId));
+    const existing = byTermId(info.termId);
+    if (existing) await attachToTerm(info, existing);
   }
-  // Nothing usable to land on — a fresh session, or every terminal died with a
-  // restarted agent (their exited tabs stay for scrollback). Open a live one so
-  // the user isn't stranded on a dead prompt having to click "+".
-  if (!tabs.some(t => !t.dead)) void newTab();
+  if (tabs.some(t => !t.dead)) return;      // already landed on a live tab
+  const untabbed = live.filter(info => !byTermId(info.termId));
+  if (untabbed.length) {
+    // Sessions are running elsewhere — let the user pick which to attach rather
+    // than dumping every one into a tab (noise on a phone).
+    openSessions();
+  } else {
+    // Nothing running anywhere — open a fresh terminal so the user isn't
+    // stranded on a dead prompt having to click "+".
+    void newTab();
+  }
 }
 
 function activate(tab: Tab): void {
@@ -585,6 +596,7 @@ moreMenu.addEventListener('click', (e) => {
   if (!item || item.hasAttribute('disabled')) return;
   closeMoreMenu();
   switch (item.dataset.act) {
+    case 'sessions': openSessions(); break;
     case 'history': openHistory(); break;
     case 'search': openTermSearch(); break;
     case 'settings': openSettings(); break;
@@ -933,6 +945,88 @@ $('history-clear').addEventListener('click', () => {
   renderHistory();
 });
 $('history-close').addEventListener('click', () => { historyDrawer.hidden = true; });
+
+// ── Sessions picker ─────────────────────────────────────────────────────
+// Lists every live pty on the host (via term.list) so you can see and attach
+// the sessions you left running — even from a device that never opened them.
+// Each row shows the running program (from the pty's OSC title), its cwd, and
+// how long it's been idle. Tapping attaches (replaying scrollback) or focuses
+// the tab if it's already open here.
+const sessionsDrawer = $('sessions-drawer');
+const sessionsList = $('sessions-list');
+
+type SessionInfo = { termId: string; shell: string; cwd: string; title?: string; lastActivity?: number };
+
+function idleLabel(lastActivity?: number): string {
+  if (!lastActivity) return '';
+  const ms = Date.now() - lastActivity;
+  if (ms < 60_000) return 'active';
+  const min = Math.floor(ms / 60_000);
+  if (min < 60) return `idle ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `idle ${hr}h`;
+  return `idle ${Math.floor(hr / 24)}d`;
+}
+
+function makeSessionRow(info: SessionInfo): HTMLElement {
+  const row = document.createElement('button');
+  row.className = 'session-row';
+
+  const shellName = shellBaseName(info.shell);
+  const prog = (info.title && programFromTitle(info.title, shellName)) || shellName;
+  const openHere = byTermId(info.termId) !== undefined;
+
+  const name = document.createElement('span');
+  name.className = 'session-name';
+  name.textContent = prog;
+
+  const meta = document.createElement('span');
+  meta.className = 'session-meta';
+  const bits = [cwdTail(info.cwd) || '~', idleLabel(info.lastActivity)].filter(Boolean);
+  if (openHere) bits.push('open');
+  meta.textContent = bits.join(' · ');
+
+  row.append(name, meta);
+  row.addEventListener('click', () => {
+    sessionsDrawer.hidden = true;
+    switchView('terminals');
+    const existing = byTermId(info.termId);
+    if (existing) { activate(existing); return; }
+    void attachToTerm(info);
+  });
+  return row;
+}
+
+function renderSessions(list: SessionInfo[]): void {
+  sessionsList.innerHTML = '';
+  if (list.length === 0) {
+    const el = document.createElement('div');
+    el.className = 'history-empty';
+    el.textContent = 'No live sessions on the host';
+    sessionsList.appendChild(el);
+    return;
+  }
+  // Most-recently-active first.
+  list.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+  for (const info of list) sessionsList.appendChild(makeSessionRow(info));
+}
+
+async function openSessions(): Promise<void> {
+  sessionsDrawer.hidden = false;
+  sessionsList.innerHTML = '<div class="history-empty">Loading…</div>';
+  try {
+    const res = await rpc<{ terms?: SessionInfo[] }>({ type: 'term.list' });
+    renderSessions(res.terms ?? []);
+  } catch {
+    sessionsList.innerHTML = '<div class="history-empty">Could not load sessions</div>';
+  }
+}
+
+sessionsDrawer.addEventListener('click', (e) => {
+  if (e.target === sessionsDrawer) sessionsDrawer.hidden = true;
+});
+$('sessions-refresh').addEventListener('click', () => void openSessions());
+$('sessions-close').addEventListener('click', () => { sessionsDrawer.hidden = true; });
 
 // ── Startup: biometric gate, then the usual session/ACCESS_KEY login flow.
 // The stored session token is withheld until the platform authenticator

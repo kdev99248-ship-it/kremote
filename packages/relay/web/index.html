@@ -53,6 +53,7 @@
 
       <!-- Overflow menu: secondary actions live here to keep the bar tidy. -->
       <div id="more-menu" role="menu" hidden>
+        <button class="more-item" data-act="sessions" role="menuitem">🖥&nbsp; Sessions</button>
         <button class="more-item" data-act="history" role="menuitem">⌘&nbsp; Command history</button>
         <button class="more-item" data-act="search" role="menuitem">🔍&nbsp; Search terminal</button>
         <button class="more-item" id="more-notify" data-act="notify" role="menuitem">🔔&nbsp; Notifications</button>
@@ -98,6 +99,16 @@
       <input id="history-search" type="search" placeholder="Search commands…" autocomplete="off" />
       <div id="history-pinned" role="list"></div>
       <div id="history-list" role="listbox"></div>
+    </div>
+
+    <!-- Sessions picker drawer: live ptys on the host, tap to attach. -->
+    <div id="sessions-drawer" hidden>
+      <div class="drawer-head">
+        <span>Sessions</span>
+        <button id="sessions-refresh" title="Refresh">Refresh</button>
+        <button id="sessions-close" title="Close">✕</button>
+      </div>
+      <div id="sessions-list" role="listbox"></div>
     </div>
 
     <!-- Settings popover -->

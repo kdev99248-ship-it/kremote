@@ -840,6 +840,21 @@ button, input, textarea { font-family: var(--font-ui); }
   color: var(--fg); background: var(--hover); }
 .history-empty { color: var(--faint); text-align: center; padding: 40px 0; font-size: 13px; }
 
+/* ── Sessions drawer (live pty picker) ────────────────────────────────── */
+#sessions-drawer { position: fixed; inset: 0; z-index: 70; display: flex;
+  flex-direction: column; background: rgba(4, 4, 4, .72); backdrop-filter: blur(4px); }
+#sessions-list { flex: 1; overflow-y: auto; padding: 0 16px 24px;
+  display: flex; flex-direction: column; gap: 6px; }
+.session-row { display: flex; flex-direction: column; gap: 3px; text-align: left;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+  border-radius: var(--r-ctl); padding: 12px 14px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.session-row:hover, .session-row:active { border-color: var(--accent-line);
+  background: var(--hover); }
+.session-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.session-meta { color: var(--faint); font-family: var(--font-mono);
+  font-size: 11.5px; overflow-wrap: anywhere; }
+
 /* ── Tail (Logs view) ─────────────────────────────────────────────────── */
 #tail { overflow-y: auto; }
 #tail-panel { display: flex; flex-direction: column; height: 100%; min-height: 0;

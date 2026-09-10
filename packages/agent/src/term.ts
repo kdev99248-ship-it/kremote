@@ -10,6 +10,26 @@ export interface TermInfo {
   termId: string;
   shell: string;
   cwd: string;
+  /** Last OSC window title the pty emitted (e.g. "claude"). Lets a device that
+   * never opened this terminal show what's running in the session picker. */
+  title?: string;
+  /** Epoch ms of the last output — drives an "idle 3m" label in the picker. */
+  lastActivity: number;
+}
+
+/**
+ * Extract the last OSC window-title string from a chunk of pty output.
+ * Matches OSC 0 / OSC 2 (`ESC ] 0 ; <title>` / `ESC ] 2 ; <title>`) terminated
+ * by BEL (`\x07`) or ST (`ESC \`). Returns null when the chunk sets no title.
+ * Windows ConPTY uses the BEL-terminated `]0;` form. Best-effort: a title split
+ * across two chunks is simply picked up on the next emission.
+ */
+export function parseOscTitle(buf: string): string | null {
+  const re = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let last: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(buf)) !== null) last = m[2];
+  return last;
 }
 
 /**
@@ -46,7 +66,9 @@ export const DEFAULT_ARGS = process.platform === 'win32' ? ['-NoLogo'] : [];
 // characters) with a hard slice on overflow — cheap and good enough.
 const SCROLLBACK_LIMIT = 256 * 1024;
 
-interface TermEntry { proc: pty.IPty; info: TermInfo; buffer: string }
+// `titleScan` holds a small residual tail of recent output so an OSC title
+// straddling two chunks can still be matched on the next chunk.
+interface TermEntry { proc: pty.IPty; info: TermInfo; buffer: string; titleScan: string }
 
 export class TermManager extends EventEmitter {
   private terms = new Map<string, TermEntry>();
@@ -92,7 +114,10 @@ export class TermManager extends EventEmitter {
       env: process.env as Record<string, string>,
     });
 
-    const entry: TermEntry = { proc, info: { termId, shell: label, cwd }, buffer: '' };
+    const entry: TermEntry = {
+      proc, buffer: '', titleScan: '',
+      info: { termId, shell: label, cwd, lastActivity: Date.now() },
+    };
     this.terms.set(termId, entry);
 
     proc.onData(data => {
@@ -100,6 +125,14 @@ export class TermManager extends EventEmitter {
       if (entry.buffer.length > SCROLLBACK_LIMIT) {
         entry.buffer = entry.buffer.slice(entry.buffer.length - SCROLLBACK_LIMIT);
       }
+      entry.info.lastActivity = Date.now();
+      // Track the running program via the OSC window title. Scan the residual
+      // tail + this chunk so a title split across chunks is still caught, then
+      // keep a short tail for next time.
+      const scan = entry.titleScan + data;
+      const title = parseOscTitle(scan);
+      if (title !== null) entry.info.title = title;
+      entry.titleScan = scan.slice(-256);
       this.emit('data', termId, data);
     });
     proc.onExit(({ exitCode, signal }) => {
@@ -107,7 +140,7 @@ export class TermManager extends EventEmitter {
       this.emit('exit', termId, signal == null ? exitCode : null);
     });
 
-    return { termId, shell: label, cwd };
+    return { ...entry.info };
   }
 
   input(termId: string, data: string): boolean {
